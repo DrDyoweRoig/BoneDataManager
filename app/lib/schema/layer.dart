@@ -19,7 +19,7 @@ const kFixedColumns = [
 ];
 
 /// A user-defined field. Values live in `Entry.values[id]`:
-/// singleChoice String, multiChoice List<String>, yesNo bool, shortText String,
+/// singleChoice `String`, multiChoice `List<String>`, yesNo `bool`, shortText `String`,
 /// number num, date String `YYYY-MM-DD`.
 class Layer {
   const Layer({
