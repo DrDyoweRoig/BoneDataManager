@@ -5,12 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/providers.dart';
+import 'wizard/wizard_screen.dart';
 
 class HomeScreen extends ConsumerWidget {
-  const HomeScreen({super.key, this.onCreate});
-
-  /// Opens the create wizard.
-  final VoidCallback? onCreate;
+  const HomeScreen({super.key});
 
   Future<void> _open(BuildContext context, WidgetRef ref, String path) async {
     try {
@@ -46,7 +44,8 @@ class HomeScreen extends ConsumerWidget {
               Text('Bone Data Manager', style: theme.textTheme.headlineMedium, textAlign: TextAlign.center),
               const SizedBox(height: 32),
               FilledButton.icon(
-                onPressed: onCreate,
+                onPressed: () =>
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WizardScreen())),
                 icon: const Icon(Icons.add),
                 label: const Text('Create a new database'),
                 style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
