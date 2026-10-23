@@ -1,0 +1,242 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../catalog/catalog.dart';
+import '../common/enums.dart';
+import '../data/local_store.dart';
+import '../entries/entry.dart';
+import '../export/cell_format.dart';
+import '../export/excel_export.dart';
+import '../schema/layer.dart';
+import '../state/providers.dart';
+import 'entry_form_screen.dart';
+import 'observer_dialog.dart';
+import 'widgets/select_chips.dart';
+
+enum _Kind { bones, teeth }
+
+class WorkspaceScreen extends ConsumerStatefulWidget {
+  const WorkspaceScreen({super.key, this.extraActions = const []});
+
+  /// App bar buttons added by later screens (Structure, Settings).
+  final List<Widget> extraActions;
+
+  @override
+  ConsumerState<WorkspaceScreen> createState() => _WorkspaceScreenState();
+}
+
+class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
+  String? _observer;
+  String _search = '';
+  Set<_Kind> _kinds = {};
+  Set<Side> _sides = {};
+  Set<Jaw> _jaws = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askObserver(required: true));
+  }
+
+  Future<void> _askObserver({bool required = false}) async {
+    final settings = await ref.read(settingsProvider.future);
+    if (!mounted) return;
+    final id = await showObserverDialog(context, initial: _observer ?? settings.observerId, required: required);
+    if (id == null) return;
+    setState(() => _observer = id);
+    await ref.read(settingsProvider.notifier).setObserverId(id);
+  }
+
+  bool _matches(Entry e, List<Layer> layers) {
+    final d = e.data;
+    if (_kinds.isNotEmpty && !_kinds.contains(d.elementId == kTeethId ? _Kind.teeth : _Kind.bones)) return false;
+    if (_sides.isNotEmpty && !_sides.contains(d.side)) return false;
+    if (_jaws.isNotEmpty && !_jaws.contains(d.jaw)) return false;
+    final q = _search.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    final text = [
+      e.refId, elementName(d), elementRegion(d).label, d.dentition?.label, d.toothType, d.jaw?.label, d.side?.label,
+      e.createdBy, e.modifiedBy,
+      for (final l in layers) cellText(l, d.values[l.id]),
+    ].whereType<String>().join(' ').toLowerCase();
+    return text.contains(q);
+  }
+
+  Future<void> _openForm(LocalStore store, [Entry? entry]) async {
+    if (_observer == null) await _askObserver(required: true);
+    if (_observer == null || !mounted) return;
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => EntryFormScreen(store: store, observer: _observer!, entry: entry)));
+  }
+
+  Future<void> _delete(LocalStore store, Entry e) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text('Delete ${e.refId}?'),
+        content: const Text('The entry is removed from lists and exports. Its Ref ID is not reused.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) await store.deleteEntry(e.id, _observer ?? '');
+  }
+
+  Future<void> _export(LocalStore store) async {
+    final now = DateTime.now();
+    final bytes = buildWorkbookBytes(store.def, await store.allEntries(),
+        exportedBy: _observer ?? '', exportedAt: now);
+    final uri = await FilePicker.saveFile(
+      dialogTitle: 'Export Excel',
+      fileName: exportFileName(store.def.name, now),
+      bytes: Uint8List.fromList(bytes),
+      type: FileType.custom,
+      allowedExtensions: ['xlsx'],
+    );
+    if (uri != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported to ${uri.toFilePath()}')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = ref.watch(openStoreProvider);
+    if (store == null) return const SizedBox.shrink();
+    final def = store.def;
+    final layers = def.orderedLayers;
+    final theme = Theme.of(context);
+    final hasTeeth = def.selectedElements.contains(kTeethId);
+    final hasBones = def.selectedElements.any((id) => id != kTeethId);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(def.name),
+        actions: [
+          ActionChip(
+            avatar: const Icon(Icons.person_outline, size: 18),
+            label: Text('Observer: ${_observer ?? '—'}'),
+            onPressed: _askObserver,
+          ),
+          const SizedBox(width: 8),
+          IconButton(tooltip: 'Export Excel', icon: const Icon(Icons.download), onPressed: () => _export(store)),
+          ...widget.extraActions,
+          IconButton(
+            tooltip: 'Close database',
+            icon: const Icon(Icons.close),
+            onPressed: () => ref.read(openStoreProvider.notifier).close(),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openForm(store),
+        icon: const Icon(Icons.add),
+        label: const Text('New entry'),
+      ),
+      body: StreamBuilder<List<Entry>>(
+        stream: store.watchEntries(),
+        builder: (context, snap) {
+          final all = snap.data ?? const <Entry>[];
+          final rows = all.where((e) => _matches(e, layers)).toList();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Wrap(
+                  spacing: 16,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 280,
+                      child: TextField(
+                        key: const Key('workspace-search'),
+                        decoration: const InputDecoration(
+                            prefixIcon: Icon(Icons.search), hintText: 'Search', isDense: true),
+                        onChanged: (v) => setState(() => _search = v),
+                      ),
+                    ),
+                    if (hasTeeth && hasBones)
+                      SelectChips<_Kind>(
+                          values: _Kind.values,
+                          label: (k) => k == _Kind.bones ? 'Bones' : 'Teeth',
+                          selected: _kinds,
+                          onChanged: (s) => setState(() => _kinds = s)),
+                    SelectChips<Side>(
+                        values: Side.values,
+                        label: (s) => s.label,
+                        selected: _sides,
+                        onChanged: (s) => setState(() => _sides = s)),
+                    if (hasTeeth)
+                      SelectChips<Jaw>(
+                          values: Jaw.values,
+                          label: (j) => j.label,
+                          selected: _jaws,
+                          onChanged: (s) => setState(() => _jaws = s)),
+                    Text('${rows.length} of ${all.length} entries', style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: all.isEmpty
+                    ? Center(
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Text('Start your first entry', style: theme.textTheme.titleMedium),
+                          const SizedBox(height: 4),
+                          const Text('Each bone or tooth you record gets its own Ref ID.'),
+                        ]),
+                      )
+                    : _table(store, rows, layers),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _table(LocalStore store, List<Entry> rows, List<Layer> layers) {
+    final cols = ['Ref ID', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
+      for (final l in layers) l.name, 'Created by', 'Modified by', ''];
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 88),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          showCheckboxColumn: false,
+          columns: [for (final c in cols) DataColumn(label: Text(c))],
+          rows: [
+            for (final e in rows)
+              DataRow(
+                onSelectChanged: (_) => _openForm(store, e),
+                cells: [
+                  DataCell(Text(e.refId, style: const TextStyle(fontWeight: FontWeight.w600))),
+                  DataCell(Text(elementName(e.data))),
+                  DataCell(Text(elementRegion(e.data).label)),
+                  DataCell(Text(e.data.dentition?.label ?? '')),
+                  DataCell(Text(e.data.toothType ?? '')),
+                  DataCell(Text(e.data.jaw?.label ?? '')),
+                  DataCell(Text(e.data.side?.label ?? '')),
+                  for (final l in layers) DataCell(Text(cellText(l, e.data.values[l.id]))),
+                  DataCell(Text(e.createdBy)),
+                  DataCell(Text(e.modifiedBy)),
+                  DataCell(IconButton(
+                    tooltip: 'Delete entry',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => _delete(store, e),
+                  )),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}

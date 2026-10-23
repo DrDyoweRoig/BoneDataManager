@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'state/providers.dart';
 import 'ui/home_screen.dart';
 import 'ui/theme.dart';
+import 'ui/workspace_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: BoneDataManagerApp()));
@@ -20,9 +21,7 @@ class BoneDataManagerApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
-      home: store == null
-          ? const HomeScreen()
-          : Scaffold(appBar: AppBar(title: Text(store.def.name))),
+      home: store == null ? const HomeScreen() : WorkspaceScreen(key: ObjectKey(store)),
     );
   }
 }
