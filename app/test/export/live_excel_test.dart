@@ -5,6 +5,7 @@ import 'package:bone_data_manager/data/local_store.dart';
 import 'package:bone_data_manager/entries/entry.dart';
 import 'package:bone_data_manager/export/live_excel.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/xlsx_reader.dart';
@@ -28,6 +29,21 @@ void main() {
 
   List<String> refIds(File f) => [for (final r in readXlsx(f.readAsBytesSync()).sheets['Entries']!.skip(1)) r.first];
 
+  /// Polls until the Excel file lists [expected]; the file can be briefly locked while written.
+  Future<void> expectEventually(File f, List<String> expected) async {
+    List<String>? last;
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      try {
+        last = refIds(f);
+        if (listEquals(last, expected)) return;
+      } on FileSystemException {
+        // still being written
+      }
+    }
+    fail('Excel never listed $expected (last: $last)');
+  }
+
   test('excel file sits next to the database with the same name', () {
     expect(excelFileFor(File('C:/x/Prova.sqlite')).path, 'C:/x/Prova.xlsx');
   });
@@ -42,11 +58,9 @@ void main() {
 
   test('started updater rewrites the file after each change', () async {
     final live = LiveExcel(store, exportedBy: () => 'AP', delay: const Duration(milliseconds: 50))..start();
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(refIds(excelFileFor(store.file!)), isEmpty);
+    await expectEventually(excelFileFor(store.file!), []);
     await store.createEntries([_femur], 'AP');
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(refIds(excelFileFor(store.file!)), ['MAS-0001']);
+    await expectEventually(excelFileFor(store.file!), ['MAS-0001']);
     await live.dispose();
   });
 

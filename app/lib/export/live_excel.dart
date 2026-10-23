@@ -63,9 +63,17 @@ class LiveExcel {
       final bytes = buildWorkbookBytes(store.def, await store.allEntries(),
           exportedBy: exportedBy(), exportedAt: DateTime.now());
       await tmp.writeAsBytes(bytes, flush: true);
-      // Rename so a half-written file never replaces a good one.
-      await tmp.rename(target.path);
-      return _set(true);
+      // Rename so a half-written file never replaces a good one. Retry briefly: antivirus or
+      // the indexer can hold the old file for a moment; Excel holds it until closed.
+      for (var attempt = 1;; attempt++) {
+        try {
+          await tmp.rename(target.path);
+          return _set(true);
+        } on FileSystemException {
+          if (attempt == 3) rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+      }
     } on FileSystemException {
       if (tmp.existsSync()) await tmp.delete();
       return _set(false);
