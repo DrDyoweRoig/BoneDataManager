@@ -18,7 +18,9 @@ class BackupInfo {
   final File xlsx;
 }
 
-/// Spec §13. Files: `<name>_<id8>_<yyyyMMdd-HHmmss>.sqlite|.xlsx`.
+/// Spec §13. One folder per database, `<backups>/<name>/`, holding
+/// `<name> <yyyy-MM-dd HH-mm>.sqlite|.xlsx`. A hidden `.database-id` file ties the folder to its
+/// database, so two databases with the same name get `<name>` and `<name> (2)`.
 class BackupService {
   BackupService(this.dir, {this.keep = 20, DateTime Function()? now}) : _now = now ?? DateTime.now;
 
@@ -26,12 +28,36 @@ class BackupService {
   final int keep;
   final DateTime Function() _now;
 
-  static final _stamp = DateFormat('yyyyMMdd-HHmmss');
+  static const _idFile = '.database-id';
+  static final _stamp = DateFormat('yyyy-MM-dd HH-mm');
+  static final _namePattern = RegExp(r'^(.*) (\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2})\.sqlite$');
 
   /// Last backed-up state per database id, for [backup]'s `onlyIfChanged`.
   final Map<String, String> _lastStamp = {};
 
-  static String _id8(String id) => id.length > 8 ? id.substring(0, 8) : id;
+  String _join(String a, String b) => '$a${Platform.pathSeparator}$b';
+
+  Directory? _findFolder(String databaseId) {
+    if (!dir.existsSync()) return null;
+    for (final d in dir.listSync().whereType<Directory>()) {
+      final f = File(_join(d.path, _idFile));
+      if (f.existsSync() && f.readAsStringSync().trim() == databaseId) return d;
+    }
+    return null;
+  }
+
+  Directory _folderFor(String databaseId, String name) {
+    final existing = _findFolder(databaseId);
+    if (existing != null) return existing;
+    final base = sanitizeFileName(name);
+    for (var i = 1;; i++) {
+      final d = Directory(_join(dir.path, i == 1 ? base : '$base ($i)'));
+      if (d.existsSync()) continue;
+      d.createSync(recursive: true);
+      File(_join(d.path, _idFile)).writeAsStringSync(databaseId);
+      return d;
+    }
+  }
 
   /// With [onlyIfChanged], returns null and writes nothing when the database is unchanged since
   /// this service's last backup of it, so idle hours don't push older backups out.
@@ -39,13 +65,12 @@ class BackupService {
     final def = store.def;
     final stamp = await store.changeStamp();
     if (onlyIfChanged && _lastStamp[def.id] == stamp) return null;
-    await dir.create(recursive: true);
+    final folder = _folderFor(def.id, def.name);
     final at = _now();
-    final base = '${dir.path}${Platform.pathSeparator}'
-        '${sanitizeFileName(def.name)}_${_id8(def.id)}_${_stamp.format(at)}';
+    final base = _join(folder.path, '${sanitizeFileName(def.name)} ${_stamp.format(at)}');
     final sqlite = File('$base.sqlite');
     final xlsx = File('$base.xlsx');
-    if (sqlite.existsSync()) await sqlite.delete();
+    if (sqlite.existsSync()) await sqlite.delete(); // same minute: replace
     await store.vacuumInto(sqlite);
     await xlsx.writeAsBytes(
         buildWorkbookBytes(def, await store.allEntries(), exportedBy: exportedBy, exportedAt: at));
@@ -56,30 +81,18 @@ class BackupService {
 
   /// Backups of one database, newest first.
   Future<List<BackupInfo>> list(String databaseId) async {
-    if (!dir.existsSync()) return [];
-    final tag = '_${_id8(databaseId)}_';
+    final folder = _findFolder(databaseId);
+    if (folder == null) return [];
     final result = <BackupInfo>[];
-    for (final f in dir.listSync().whereType<File>()) {
-      final name = f.uri.pathSegments.last;
-      if (!name.endsWith('.sqlite') || !name.contains(tag)) continue;
-      final stem = name.substring(0, name.length - '.sqlite'.length);
-      final cut = stem.lastIndexOf(tag);
-      final at = _parseStamp(stem.substring(cut + tag.length));
-      if (at == null) continue;
-      result.add(BackupInfo(databaseId, stem.substring(0, cut), at, f, File('${f.path.substring(0, f.path.length - 7)}.xlsx')));
+    for (final f in folder.listSync().whereType<File>()) {
+      final m = _namePattern.firstMatch(f.uri.pathSegments.last);
+      if (m == null) continue;
+      final n = [for (var i = 2; i <= 6; i++) int.parse(m.group(i)!)];
+      result.add(BackupInfo(databaseId, m.group(1)!, DateTime(n[0], n[1], n[2], n[3], n[4]), f,
+          File('${f.path.substring(0, f.path.length - '.sqlite'.length)}.xlsx')));
     }
     result.sort((a, b) => b.at.compareTo(a.at));
     return result;
-  }
-
-  static final _stampPattern = RegExp(r'^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$');
-
-  // intl cannot parse abutting numeric fields like yyyyMMdd, so parse by hand.
-  static DateTime? _parseStamp(String s) {
-    final m = _stampPattern.firstMatch(s);
-    if (m == null) return null;
-    final p = [for (var i = 1; i <= 6; i++) int.parse(m.group(i)!)];
-    return DateTime(p[0], p[1], p[2], p[3], p[4], p[5]);
   }
 
   Future<void> _prune(String databaseId) async {

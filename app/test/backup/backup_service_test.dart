@@ -32,8 +32,9 @@ void main() {
     final b = (await service().backup(store, exportedBy: 'AP'))!;
     expect(b.sqlite.existsSync(), isTrue);
     expect(b.xlsx.existsSync(), isTrue);
-    expect(b.sqlite.uri.pathSegments.last, 'Site-A_abcdef12_20261023-090000.sqlite');
-    expect(b.xlsx.uri.pathSegments.last, 'Site-A_abcdef12_20261023-090000.xlsx');
+    expect(b.sqlite.uri.pathSegments.last, 'Site-A 2026-10-23 09-00.sqlite');
+    expect(b.xlsx.uri.pathSegments.last, 'Site-A 2026-10-23 09-00.xlsx');
+    expect(b.sqlite.parent.uri.pathSegments.where((s) => s.isNotEmpty).last, 'Site-A');
   });
 
   test('keeps only the 20 most recent, newest first', () async {
@@ -46,7 +47,8 @@ void main() {
     expect(list.length, 20);
     expect(list.first.at, DateTime(2026, 10, 23, 9, 21));
     expect(list.last.at, DateTime(2026, 10, 23, 9, 2));
-    expect(Directory('${tmp.path}/backups').listSync().length, 40);
+    final files = Directory('${tmp.path}/backups/Site-A').listSync().whereType<File>();
+    expect(files.where((f) => f.path.endsWith('.sqlite') || f.path.endsWith('.xlsx')).length, 40);
   });
 
   test('restore produces an openable copy with the same entries', () async {
@@ -95,5 +97,16 @@ void main() {
     expect(f1.path, isNot(f2.path));
     expect(f1.existsSync() && f2.existsSync(), isTrue);
   });
-}
 
+  test('databases with the same name keep separate backup folders', () async {
+    final s = service();
+    final other = await LocalStore.create(File('${tmp.path}/db/other.sqlite'),
+        const DatabaseDef(id: 'zzzzzzzz99', name: 'Site/A', prefix: 'X-', selectedElements: {'femur'}));
+    await s.backup(store, exportedBy: 'AP');
+    final b = (await s.backup(other, exportedBy: 'AP'))!;
+    await other.close();
+    expect(b.sqlite.parent.uri.pathSegments.where((p) => p.isNotEmpty).last, 'Site-A (2)');
+    expect((await s.list('abcdef1234567890')).length, 1);
+    expect((await s.list('zzzzzzzz99')).length, 1);
+  });
+}
