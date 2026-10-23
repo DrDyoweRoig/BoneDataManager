@@ -10,6 +10,7 @@ import '../data/local_store.dart';
 import '../entries/entry.dart';
 import '../export/cell_format.dart';
 import '../export/excel_export.dart';
+import '../export/live_excel.dart';
 import '../schema/layer.dart';
 import '../state/providers.dart';
 import 'entry_form_screen.dart';
@@ -34,11 +35,44 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Set<_Kind> _kinds = {};
   Set<Side> _sides = {};
   Set<Jaw> _jaws = {};
+  late final LocalStore? _store = ref.read(openStoreProvider);
+  late final Stream<List<Entry>>? _entries = _store?.watchEntries();
+  LiveExcel? _live;
+  bool _warnedExcel = false;
 
   @override
   void initState() {
     super.initState();
+    final store = _store;
+    if (store?.file != null) {
+      _live = LiveExcel(store!, exportedBy: () => _observer ?? '')..start();
+      _live!.status.addListener(_onExcelStatus);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _askObserver(required: true));
+  }
+
+  @override
+  void dispose() {
+    _live?.dispose();
+    super.dispose();
+  }
+
+  void _onExcelStatus() {
+    final ok = _live!.status.value;
+    if (ok == true) _warnedExcel = false;
+    if (ok != false || _warnedExcel || !mounted) return;
+    _warnedExcel = true;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Couldn't update the Excel file. If it's open in Excel, close it and press Update Excel.")));
+  }
+
+  Future<void> _updateExcel() async {
+    final ok = await _live!.update();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(ok
+            ? 'Excel updated: ${excelFileFor(_store!.file!).path}'
+            : "Couldn't update the Excel file. If it's open in Excel, close it and try again.")));
   }
 
   Future<void> _askObserver({bool required = false}) async {
@@ -107,6 +141,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Widget build(BuildContext context) {
     final store = ref.watch(openStoreProvider);
     if (store == null) return const SizedBox.shrink();
+    // Structure changes (layers, names) also change the Excel file.
+    ref.listen(openStoreProvider, (_, _) => _live?.schedule());
     final def = store.def;
     final layers = def.orderedLayers;
     final theme = Theme.of(context);
@@ -123,7 +159,19 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
             onPressed: _askObserver,
           ),
           const SizedBox(width: 8),
-          IconButton(tooltip: 'Export Excel', icon: const Icon(Icons.download), onPressed: () => _export(store)),
+          if (_live != null)
+            ValueListenableBuilder<bool?>(
+              valueListenable: _live!.status,
+              builder: (context, ok, _) => TextButton.icon(
+                onPressed: _updateExcel,
+                icon: Icon(
+                  ok == false ? Icons.warning_amber_rounded : (ok == true ? Icons.check_circle_outline : Icons.sync),
+                  color: ok == false ? theme.colorScheme.error : null,
+                ),
+                label: Text(ok == false ? 'Update Excel (not saved)' : 'Update Excel'),
+              ),
+            ),
+          IconButton(tooltip: 'Export a copy', icon: const Icon(Icons.download), onPressed: () => _export(store)),
           ...widget.extraActions,
           IconButton(
             tooltip: 'Close database',
@@ -139,7 +187,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         label: const Text('New entry'),
       ),
       body: StreamBuilder<List<Entry>>(
-        stream: store.watchEntries(),
+        stream: _entries,
         builder: (context, snap) {
           final all = snap.data ?? const <Entry>[];
           final rows = all.where((e) => _matches(e, layers)).toList();

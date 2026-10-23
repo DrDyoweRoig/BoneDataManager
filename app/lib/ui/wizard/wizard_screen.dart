@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -30,6 +31,31 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
   List<Layer> _layers = [];
   String? _error;
   bool _creating = false;
+
+  /// Folder the database (and its Excel file) is created in.
+  String? _folder;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.read(settingsProvider.future).then((s) {
+      if (mounted && _folder == null) setState(() => _folder = s.databasesDir);
+    });
+  }
+
+  Future<void> _chooseFolder() async {
+    final dir = await FilePicker.getDirectoryPath(dialogTitle: 'Where to save the database', initialDirectory: _folder);
+    if (dir != null && mounted) setState(() => _folder = dir);
+  }
+
+  Widget _folderTile() => Card.outlined(
+        child: ListTile(
+          leading: const Icon(Icons.folder_outlined),
+          title: const Text('Saved in'),
+          subtitle: Text(_folder ?? '…'),
+          trailing: TextButton(onPressed: _chooseFolder, child: const Text('Change folder')),
+        ),
+      );
 
   String? _validateStep() => switch (_step) {
         0 => validateName(_name.text),
@@ -71,7 +97,7 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
               l.copyWith(appliesTo: l.appliesTo.where(_elements.contains).toList())
         ],
       );
-      final file = freeDatabaseFile(settings.databasesDir, def.name);
+      final file = freeDatabaseFile(_folder ?? settings.databasesDir, def.name);
       await ref.read(openStoreProvider.notifier).set(LocalStore.create(file, def));
       if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
     } catch (e) {
@@ -150,6 +176,11 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
             onChanged: (_) => setState(() => _error = null),
             onSubmitted: (_) => _next(),
           ),
+          const SizedBox(height: 16),
+          _folderTile(),
+          const SizedBox(height: 4),
+          Text('An Excel file with the same name is kept next to it and updated as you work.',
+              style: theme.textTheme.bodySmall),
         ]);
       case 1:
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -208,6 +239,7 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
           Card.outlined(
             child: Column(children: [
               ListTile(title: const Text('Name'), trailing: Text(_name.text.trim())),
+              ListTile(title: const Text('Saved in'), subtitle: Text(_folder ?? '…')),
               ListTile(title: const Text('First Ref ID'), trailing: Text(formatRefId(_prefix.text, _digits, 1))),
               ListTile(
                 title: const Text('Elements'),

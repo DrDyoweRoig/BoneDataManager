@@ -108,4 +108,13 @@ void main() {
     await _next(tester);
     expect(find.text('Select at least one bone or teeth'), findsOneWidget);
   });
+
+  testWidgets('first step shows where the database will be saved', (tester) async {
+    await _pump(tester);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved in'), findsOneWidget);
+    expect(find.textContaining('Bone Data Manager'), findsWidgets);
+    expect(find.text('Change folder'), findsOneWidget);
+  });
 }
