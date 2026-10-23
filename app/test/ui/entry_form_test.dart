@@ -170,4 +170,12 @@ void main() {
       expect((await tester.runAsync(store.allEntries))!.single.data.values['len'], 42);
     });
   });
+
+  testWidgets('paired bone accepts Unknown side', (tester) async {
+    final store = await _pump(tester, _def());
+    await _tap(tester, 'Femur');
+    await _tap(tester, 'Unknown');
+    await _save(tester);
+    expect((await tester.runAsync(store.allEntries))!.single.data.side, Side.unknown);
+  });
 }

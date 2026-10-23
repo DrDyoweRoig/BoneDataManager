@@ -21,7 +21,8 @@ enum Dentition {
 
 enum Jaw {
   upper('Upper'),
-  lower('Lower');
+  lower('Lower'),
+  unknown('Unknown');
 
   const Jaw(this.label);
   final String label;
@@ -29,7 +30,8 @@ enum Jaw {
 
 enum Side {
   right('Right'),
-  left('Left');
+  left('Left'),
+  unknown('Unknown');
 
   const Side(this.label);
   final String label;

@@ -251,7 +251,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
         section(
             'Side',
             SelectChips<Side>(
-              values: const [Side.left, Side.right],
+              values: const [Side.left, Side.right, Side.unknown],
               label: (s) => s.label,
               selected: _sides,
               multi: false,

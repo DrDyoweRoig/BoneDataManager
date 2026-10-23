@@ -31,4 +31,16 @@ void main() {
         dentition: Dentition.deciduous, jaws: {Jaw.upper}, sides: {Side.right}, types: {'M1', 'dm1'});
     expect(r.single, const ToothSpec(Dentition.deciduous, Jaw.upper, Side.right, 'dm1'));
   });
+
+  test('unknown jaw and side expand like any other value, after the known ones', () {
+    final r = expandToothSelection(
+        dentition: Dentition.permanent,
+        jaws: {Jaw.unknown, Jaw.upper},
+        sides: {Side.unknown},
+        types: {'M1'});
+    expect(r, const [
+      ToothSpec(Dentition.permanent, Jaw.upper, Side.unknown, 'M1'),
+      ToothSpec(Dentition.permanent, Jaw.unknown, Side.unknown, 'M1'),
+    ]);
+  });
 }

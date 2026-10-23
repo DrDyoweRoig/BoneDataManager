@@ -47,4 +47,9 @@ void main() {
     expect(toothTypesFor(Dentition.deciduous), ['di1', 'di2', 'dc', 'dm1', 'dm2']);
     expect(kTeethId, 'teeth');
   });
+
+  test('unknown side and jaw', () {
+    expect(Side.unknown.label, 'Unknown');
+    expect(Jaw.unknown.label, 'Unknown');
+  });
 }
