@@ -77,10 +77,9 @@ class _LayersEditorState extends State<LayersEditor> {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             buildDefaultDragHandles: false,
-            onReorder: (from, to) {
+            onReorderItem: (from, to) {
               final list = [...widget.layers];
-              final item = list.removeAt(from);
-              list.insert(to > from ? to - 1 : to, item);
+              list.insert(to, list.removeAt(from));
               _emit(list);
             },
             children: [
