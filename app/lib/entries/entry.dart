@@ -52,8 +52,12 @@ String elementName(EntryDraft d) => d.elementId == kTeethId ? 'Tooth' : boneById
 
 Region elementRegion(EntryDraft d) => d.elementId == kTeethId ? Region.teeth : boneById(d.elementId).region;
 
-String? validateDraft(EntryDraft d, DatabaseDef db) {
-  if (!db.selectedElements.contains(d.elementId)) return 'This element is not part of the database';
+/// [originalElementId]: when editing, an entry keeps its element even if it was later
+/// removed from the database.
+String? validateDraft(EntryDraft d, DatabaseDef db, {String? originalElementId}) {
+  if (d.elementId != originalElementId && !db.selectedElements.contains(d.elementId)) {
+    return 'This element is not part of the database';
+  }
   if (d.elementId != kTeethId && boneById(d.elementId).paired && d.side == null) {
     return 'Choose Left or Right';
   }

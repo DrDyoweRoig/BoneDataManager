@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
+import '../data/files.dart';
 import '../data/local_store.dart';
 import '../export/cell_format.dart';
 import '../export/excel_export.dart';
@@ -26,11 +28,18 @@ class BackupService {
 
   static final _stamp = DateFormat('yyyyMMdd-HHmmss');
 
+  /// Last backed-up state per database id, for [backup]'s `onlyIfChanged`.
+  final Map<String, String> _lastStamp = {};
+
   static String _id8(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
-  Future<BackupInfo> backup(LocalStore store, {required String exportedBy}) async {
-    await dir.create(recursive: true);
+  /// With [onlyIfChanged], returns null and writes nothing when the database is unchanged since
+  /// this service's last backup of it, so idle hours don't push older backups out.
+  Future<BackupInfo?> backup(LocalStore store, {required String exportedBy, bool onlyIfChanged = false}) async {
     final def = store.def;
+    final stamp = await store.changeStamp();
+    if (onlyIfChanged && _lastStamp[def.id] == stamp) return null;
+    await dir.create(recursive: true);
     final at = _now();
     final base = '${dir.path}${Platform.pathSeparator}'
         '${sanitizeFileName(def.name)}_${_id8(def.id)}_${_stamp.format(at)}';
@@ -41,6 +50,7 @@ class BackupService {
     await xlsx.writeAsBytes(
         buildWorkbookBytes(def, await store.allEntries(), exportedBy: exportedBy, exportedAt: at));
     await _prune(def.id);
+    _lastStamp[def.id] = stamp;
     return BackupInfo(def.id, def.name, at, sqlite, xlsx);
   }
 
@@ -79,12 +89,19 @@ class BackupService {
     }
   }
 
-  /// Copies a backup next to the user's databases as a new file and returns it.
+  /// Copies a backup next to the user's databases as a new file with its own database id,
+  /// never overwriting an existing file, and returns it.
   Future<File> restore(BackupInfo b, Directory databasesDir) async {
     await databasesDir.create(recursive: true);
     final stamp = DateFormat('yyyy-MM-dd HH-mm').format(_now());
-    final target = File('${databasesDir.path}${Platform.pathSeparator}'
-        '${sanitizeFileName(b.databaseName)} (restored $stamp).sqlite');
-    return b.sqlite.copy(target.path);
+    final target = freeFile(databasesDir.path, '${b.databaseName} (restored $stamp)', 'sqlite');
+    final copy = await b.sqlite.copy(target.path);
+    final store = await LocalStore.open(copy);
+    try {
+      await store.setDatabaseId(const Uuid().v4());
+    } finally {
+      await store.close();
+    }
+    return copy;
   }
 }

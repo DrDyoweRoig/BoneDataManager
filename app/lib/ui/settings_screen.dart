@@ -67,10 +67,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
     if (ok != true) return;
-    final settings = await ref.read(settingsProvider.future);
-    final file = await (await _service()).restore(b, Directory(settings.databasesDir));
-    await ref.read(openStoreProvider.notifier).openFile(file);
-    if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    try {
+      final settings = await ref.read(settingsProvider.future);
+      final file = await (await _service()).restore(b, Directory(settings.databasesDir));
+      await ref.read(openStoreProvider.notifier).openFile(file);
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } catch (e) {
+      if (mounted) _toast("Couldn't restore: $e");
+    }
   }
 
   Future<void> _chooseFolder() async {

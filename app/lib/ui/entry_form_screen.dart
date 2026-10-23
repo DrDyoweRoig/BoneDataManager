@@ -27,8 +27,10 @@ class EntryFormScreen extends StatefulWidget {
 
 class _EntryFormScreenState extends State<EntryFormScreen> {
   late final bool _hasTeeth = widget.store.def.selectedElements.contains(kTeethId);
-  late final List<BoneDef> _bones =
-      kBones.where((b) => widget.store.def.selectedElements.contains(b.id)).toList();
+  // An edited entry keeps its own bone even if it was later removed from the database.
+  late final List<BoneDef> _bones = kBones
+      .where((b) => widget.store.def.selectedElements.contains(b.id) || b.id == widget.entry?.data.elementId)
+      .toList();
 
   late _Mode _mode;
   String? _boneId;
@@ -37,6 +39,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   Set<Side> _sides = {};
   Set<String> _types = {};
   late Map<String, Object?> _values;
+  final Map<String, String> _numberText = {};
   String _search = '';
   String? _error;
   bool _saving = false;
@@ -76,14 +79,38 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   List<ToothSpec> get _teeth =>
       expandToothSelection(dentition: _dentition, jaws: _jaws, sides: _sides, types: _types);
 
-  Map<String, Object?> _valuesFor(List<Layer> layers) => {
-        for (final l in layers)
-          if (_values[l.id] != null && _values[l.id] != '' && !(_values[l.id] is List && (_values[l.id] as List).isEmpty))
-            l.id: _values[l.id],
-      };
+  static bool _isEmpty(Object? v) => v == null || v == '' || (v is List && v.isEmpty);
+
+  /// Values to store. When editing, values of layers that don't apply here (narrowed or
+  /// removed layers) are kept untouched; only applicable layers are overwritten or cleared.
+  Map<String, Object?>? _collectValues() {
+    final layers = _layers;
+    for (final l in layers.where((l) => l.type == LayerType.number)) {
+      final text = _numberText[l.id];
+      if (text == null) continue;
+      final t = text.trim().replaceAll(',', '.');
+      if (t.isEmpty) {
+        _values[l.id] = null;
+        continue;
+      }
+      final n = num.tryParse(t);
+      if (n == null) {
+        setState(() => _error = 'Enter a number for ${l.name}');
+        return null;
+      }
+      _values[l.id] = n;
+    }
+    final values = <String, Object?>{if (_editing) ...widget.entry!.data.values};
+    for (final l in layers) {
+      final v = _values[l.id];
+      _isEmpty(v) ? values.remove(l.id) : values[l.id] = v;
+    }
+    return values;
+  }
 
   Future<void> _save() async {
-    final values = _valuesFor(_layers);
+    final values = _collectValues();
+    if (values == null) return;
     final List<EntryDraft> drafts;
     if (_mode == _Mode.teeth) {
       final teeth = _teeth;
@@ -100,7 +127,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
         EntryDraft(elementId: _boneId!, side: paired && _sides.isNotEmpty ? _sides.single : null, values: values)
       ];
     }
-    final error = validateDraft(drafts.first, widget.store.def);
+    final error = validateDraft(drafts.first, widget.store.def, originalElementId: widget.entry?.data.elementId);
     if (error != null) return setState(() => _error = error);
 
     setState(() => _saving = true);
@@ -302,19 +329,21 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     void set(Object? value) => _change(() => _values[l.id] = value);
     switch (l.type) {
       case LayerType.singleChoice:
+        // A stored value that is no longer an option stays visible and selected.
         return SelectChips<String>(
-            values: l.options,
+            values: [...l.options, if (v is String && !l.options.contains(v)) v],
             label: (o) => o,
             selected: {if (v is String) v},
             multi: false,
             onChanged: (s) => set(s.isEmpty ? null : s.single));
       case LayerType.multiChoice:
         final sel = v is List ? v.cast<String>().toSet() : <String>{};
+        final all = [...l.options, ...sel.where((o) => !l.options.contains(o))];
         return SelectChips<String>(
-            values: l.options,
+            values: all,
             label: (o) => o,
             selected: sel,
-            onChanged: (s) => set([for (final o in l.options) if (s.contains(o)) o]));
+            onChanged: (s) => set([for (final o in all) if (s.contains(o)) o]));
       case LayerType.yesNo:
         return SelectChips<bool>(
             values: const [true, false],
@@ -332,7 +361,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
             key: ValueKey('layer-${l.id}'),
             initialValue: v is num ? '$v' : '',
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            onChanged: (t) => _values[l.id] = num.tryParse(t.trim().replaceAll(',', '.')));
+            onChanged: (t) => _numberText[l.id] = t);
       case LayerType.date:
         return Align(
           alignment: Alignment.centerLeft,

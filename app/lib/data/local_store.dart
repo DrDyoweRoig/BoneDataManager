@@ -165,6 +165,29 @@ class LocalStore {
     await _db.customStatement("VACUUM INTO '$path'");
   }
 
+  /// Changes whenever entries or the definition change; used to skip identical backups.
+  Future<String> changeStamp() async {
+    final row = await _db
+        .customSelect('SELECT COUNT(*) AS n, MAX(modified_at) AS m, SUM(version) AS v FROM entries')
+        .getSingle();
+    final layers = (await _db.select(_db.layerDefs).get()).map((l) => l.json).join();
+    return '$_nextNumber|${row.data['n']}|${row.data['m']}|${row.data['v']}|'
+        '${_def.name}|${_def.prefix}|${_def.digits}|${_def.selectedElements.join(',')}|${layers.hashCode}';
+  }
+
+  /// Gives this file a new database id (used for restored copies, so their backups stay apart).
+  Future<void> setDatabaseId(String id) async {
+    await _db.update(_db.meta).write(MetaCompanion(id: Value(id)));
+    _def = DatabaseDef(
+      id: id,
+      name: _def.name,
+      prefix: _def.prefix,
+      digits: _def.digits,
+      selectedElements: _def.selectedElements,
+      layers: _def.layers,
+    );
+  }
+
   Future<void> close() => _db.close();
 
   Entry _toEntry(EntryRow r) => Entry(

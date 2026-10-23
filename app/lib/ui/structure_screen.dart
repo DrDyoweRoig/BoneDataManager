@@ -44,6 +44,24 @@ class _StructureScreenState extends State<StructureScreen> {
       ) ??
       false;
 
+  Future<bool> _confirmOrphans(int n) async {
+    if (!mounted) return false;
+    return await showDialog<bool>(
+          context: context,
+          builder: (c) => AlertDialog(
+            title: const Text('Remove elements in use?'),
+            content: Text('${n == 1 ? '1 entry uses' : '$n entries use'} elements you removed. '
+                'They stay in the database and can still be edited, but new entries of those elements '
+                "can't be added."),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Save anyway')),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   Future<void> _save() async {
     setState(() {
       _nameError = validateName(_name.text);
@@ -51,13 +69,20 @@ class _StructureScreenState extends State<StructureScreen> {
       _error = _elements.isEmpty ? 'Select at least one bone or teeth' : null;
     });
     if (_nameError != null || _prefixError != null || _error != null) return;
-    await widget.store.updateDefinition(_def.copyWith(
-      name: _name.text.trim(),
-      prefix: _prefix.text,
-      digits: _digits,
-      selectedElements: _elements,
-      layers: _layers,
-    ));
+    final orphans = (await widget.store.allEntries()).where((e) => !_elements.contains(e.data.elementId)).length;
+    if (orphans > 0 && !await _confirmOrphans(orphans)) return;
+    try {
+      await widget.store.updateDefinition(_def.copyWith(
+        name: _name.text.trim(),
+        prefix: _prefix.text,
+        digits: _digits,
+        selectedElements: _elements,
+        layers: _layers,
+      ));
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't save: $e");
+      return;
+    }
     widget.onSaved?.call();
     if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
   }

@@ -1,12 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../catalog/catalog.dart';
+import '../../data/files.dart';
 import '../../data/local_store.dart';
-import '../../export/cell_format.dart';
 import '../../ids/ref_id.dart';
 import '../../schema/database_def.dart';
 import '../../schema/layer.dart';
@@ -15,16 +13,6 @@ import 'bones_picker.dart';
 import 'layer_editor.dart';
 
 const _steps = ['Name', 'Reference ID', 'Bones', 'Layers', 'Review'];
-
-/// Picks a file name in [dir] that does not exist yet: `name.sqlite`, `name (2).sqlite`…
-File freeDatabaseFile(String dir, String name) {
-  final base = '$dir${Platform.pathSeparator}${sanitizeFileName(name)}';
-  var f = File('$base.sqlite');
-  for (var i = 2; f.existsSync(); i++) {
-    f = File('$base ($i).sqlite');
-  }
-  return f;
-}
 
 class WizardScreen extends ConsumerStatefulWidget {
   const WizardScreen({super.key});

@@ -20,6 +20,7 @@ class BackupScheduler extends ConsumerStatefulWidget {
 
 class _BackupSchedulerState extends ConsumerState<BackupScheduler> {
   Timer? _timer;
+  BackupService? _service;
   late final AppLifecycleListener _lifecycle;
 
   @override
@@ -36,7 +37,10 @@ class _BackupSchedulerState extends ConsumerState<BackupScheduler> {
     if (store == null) return;
     try {
       final settings = await ref.read(settingsProvider.future);
-      await BackupService(Directory(settings.backupDir)).backup(store, exportedBy: settings.observerId ?? '');
+      final service = _service == null || _service!.dir.path != settings.backupDir
+          ? (_service = BackupService(Directory(settings.backupDir)))
+          : _service!;
+      await service.backup(store, exportedBy: settings.observerId ?? '', onlyIfChanged: true);
     } catch (e) {
       debugPrint('Backup failed: $e');
     }

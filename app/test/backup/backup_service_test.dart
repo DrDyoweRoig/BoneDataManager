@@ -29,7 +29,7 @@ void main() {
   BackupService service() => BackupService(Directory('${tmp.path}/backups'), now: () => clock);
 
   test('backup writes sqlite and xlsx with sanitised names', () async {
-    final b = await service().backup(store, exportedBy: 'AP');
+    final b = (await service().backup(store, exportedBy: 'AP'))!;
     expect(b.sqlite.existsSync(), isTrue);
     expect(b.xlsx.existsSync(), isTrue);
     expect(b.sqlite.uri.pathSegments.last, 'Site-A_abcdef12_20261023-090000.sqlite');
@@ -54,10 +54,46 @@ void main() {
     final s = service();
     final b = await s.backup(store, exportedBy: 'AP');
     clock = DateTime(2026, 10, 23, 11, 30);
-    final f = await s.restore(b, Directory('${tmp.path}/db'));
+    final f = await s.restore(b!, Directory('${tmp.path}/db'));
     expect(f.uri.pathSegments.last, 'Site-A (restored 2026-10-23 11-30).sqlite');
     final r = await LocalStore.open(f);
     expect((await r.allEntries()).single.refId, 'MAS-0001');
     await r.close();
   });
+
+  test('onlyIfChanged skips a backup when nothing changed', () async {
+    final s = service();
+    clock = DateTime(2026, 10, 23, 9);
+    expect(await s.backup(store, exportedBy: 'AP', onlyIfChanged: true), isNotNull);
+    clock = DateTime(2026, 10, 23, 9, 15);
+    expect(await s.backup(store, exportedBy: 'AP', onlyIfChanged: true), isNull);
+    await store.createEntries([const EntryDraft(elementId: 'femur', side: Side.right)], 'AP');
+    clock = DateTime(2026, 10, 23, 9, 30);
+    expect(await s.backup(store, exportedBy: 'AP', onlyIfChanged: true), isNotNull);
+    expect((await s.list('abcdef1234567890')).length, 2);
+  });
+
+  test('restored copy gets its own id so backups do not mix', () async {
+    final s = service();
+    clock = DateTime(2026, 10, 23, 9);
+    final b = await s.backup(store, exportedBy: 'AP');
+    final f = await s.restore(b!, Directory('${tmp.path}/db'));
+    final r = await LocalStore.open(f);
+    expect(r.def.id, isNot('abcdef1234567890'));
+    clock = DateTime(2026, 10, 23, 10);
+    await s.backup(r, exportedBy: 'AP');
+    await r.close();
+    expect((await s.list('abcdef1234567890')).length, 1);
+  });
+
+  test('two restores in the same minute never overwrite each other', () async {
+    final s = service();
+    clock = DateTime(2026, 10, 23, 9);
+    final b = await s.backup(store, exportedBy: 'AP');
+    final f1 = await s.restore(b!, Directory('${tmp.path}/db'));
+    final f2 = await s.restore(b, Directory('${tmp.path}/db'));
+    expect(f1.path, isNot(f2.path));
+    expect(f1.existsSync() && f2.existsSync(), isTrue);
+  });
 }
+

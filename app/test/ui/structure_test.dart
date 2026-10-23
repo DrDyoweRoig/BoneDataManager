@@ -51,4 +51,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("Existing values stay stored but won't be exported"), findsOneWidget);
   });
+
+  testWidgets('deselecting an element that entries use asks first', (tester) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const Key('region-lowerLimb')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('all-body')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('region-lowerLimb')));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(find.byKey(const Key('structure-save')));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    });
+    await tester.pumpAndSettle();
+    expect(find.textContaining('1 entry uses elements you removed'), findsOneWidget);
+  });
 }
+

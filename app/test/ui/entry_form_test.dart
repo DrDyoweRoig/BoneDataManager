@@ -1,5 +1,7 @@
 import 'package:bone_data_manager/catalog/catalog.dart';
+import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/data/local_store.dart';
+import 'package:bone_data_manager/entries/entry.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
 import 'package:bone_data_manager/schema/layer.dart';
 import 'package:bone_data_manager/ui/entry_form_screen.dart';
@@ -102,5 +104,70 @@ void main() {
     final save = tester.getRect(find.byKey(const Key('entry-save')));
     expect(save.bottom, lessThanOrEqualTo(600));
     expect(save.top, greaterThan(400));
+  });
+
+  group('editing existing entries', () {
+    Future<(LocalStore, Entry)> pumpEdit(WidgetTester tester, DatabaseDef def, EntryDraft draft,
+        {DatabaseDef? changeTo}) async {
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final (store, entry) = (await tester.runAsync(() async {
+        final s = await LocalStore.inMemory(def);
+        final e = (await s.createEntries([draft], 'AP')).single;
+        if (changeTo != null) await s.updateDefinition(changeTo);
+        return (s, e);
+      }))!;
+      addTearDown(() => tester.runAsync(store.close));
+      await tester.pumpWidget(MaterialApp(
+          theme: buildTheme(Brightness.light), home: EntryFormScreen(store: store, observer: 'JM', entry: entry)));
+      await tester.pumpAndSettle();
+      return (store, entry);
+    }
+
+    testWidgets('keeps values of layers that no longer apply', (tester) async {
+      const notes = Layer(id: 'n', name: 'Notes', type: LayerType.shortText);
+      final def = _def(layers: const [notes]);
+      final (store, _) = await pumpEdit(
+          tester, def, const EntryDraft(elementId: 'femur', side: Side.left, values: {'n': 'healed', 'old': 'x'}),
+          changeTo: def.copyWith(layers: [notes.copyWith(appliesTo: [kTeethId])]));
+      await _tap(tester, 'Right');
+      await _save(tester);
+      final e = (await tester.runAsync(store.allEntries))!.single;
+      expect(e.data.side, Side.right);
+      expect(e.data.values, {'n': 'healed', 'old': 'x'});
+    });
+
+    testWidgets('entry whose bone was removed from the database can still be edited', (tester) async {
+      final def = _def();
+      final (store, _) = await pumpEdit(tester, def, const EntryDraft(elementId: 'femur', side: Side.left),
+          changeTo: def.copyWith(selectedElements: {kTeethId}));
+      expect(find.text('Femur'), findsOneWidget);
+      await _tap(tester, 'Right');
+      await _save(tester);
+      expect((await tester.runAsync(store.allEntries))!.single.data.side, Side.right);
+    });
+
+    testWidgets('multi-choice value no longer in options survives toggling', (tester) async {
+      const caries = Layer(id: 'c', name: 'Caries', type: LayerType.multiChoice, options: ['Good', 'Fair']);
+      final def = _def(layers: const [caries]);
+      final (store, _) = await pumpEdit(
+          tester, def, const EntryDraft(elementId: 'femur', side: Side.left, values: {'c': ['Fair']}),
+          changeTo: def.copyWith(layers: [caries.copyWith(options: ['Good'])]));
+      expect(find.text('Fair'), findsOneWidget);
+      await _tap(tester, 'Good');
+      await _save(tester);
+      expect((await tester.runAsync(store.allEntries))!.single.data.values['c'], ['Good', 'Fair']);
+    });
+
+    testWidgets('invalid number blocks save and keeps the old value', (tester) async {
+      const len = Layer(id: 'len', name: 'Length', type: LayerType.number);
+      final (store, _) = await pumpEdit(
+          tester, _def(layers: const [len]), const EntryDraft(elementId: 'femur', side: Side.left, values: {'len': 42}));
+      await tester.enterText(find.byKey(const ValueKey('layer-len')), '12a');
+      await _save(tester);
+      expect(find.text('Enter a number for Length'), findsOneWidget);
+      expect((await tester.runAsync(store.allEntries))!.single.data.values['len'], 42);
+    });
   });
 }
