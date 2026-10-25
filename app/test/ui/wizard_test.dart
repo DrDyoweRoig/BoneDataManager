@@ -2,19 +2,25 @@ import 'dart:io';
 
 import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/data/files.dart';
+import 'package:bone_data_manager/state/cloud_providers.dart';
 import 'package:bone_data_manager/ui/theme.dart';
 import 'package:bone_data_manager/ui/wizard/wizard_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Future<void> _pump(WidgetTester tester) async {
+import '../support/fake_auth.dart';
+import '../support/fake_cloud_api.dart';
+
+Future<void> _pump(WidgetTester tester, {List<Override> overrides = const []}) async {
   SharedPreferences.setMockInitialValues({});
   tester.view.physicalSize = const Size(1200, 1600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(ProviderScope(
+      overrides: overrides,
       child: MaterialApp(theme: buildTheme(Brightness.light), home: const WizardScreen())));
   await tester.pumpAndSettle();
 }
@@ -116,5 +122,29 @@ void main() {
     expect(find.text('Saved in'), findsOneWidget);
     expect(find.textContaining('Bone Data Manager'), findsWidgets);
     expect(find.text('Change folder'), findsOneWidget);
+  });
+
+  testWidgets('signed out: Cloud is not available and says why', (tester) async {
+    await _pump(tester, overrides: [
+      authServiceProvider.overrideWithValue(FakeAuth()),
+      cloudApiProvider.overrideWithValue(FakeCloudApi(FakeCloudServer())),
+    ]);
+    await tester.tap(find.text('Cloud'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sign in to create cloud databases'), findsOneWidget);
+    expect(find.text('Members'), findsNothing);
+  });
+
+  testWidgets('signed in: Cloud adds a Members step', (tester) async {
+    final auth = FakeAuth();
+    await auth.signIn('ap@example.com', auth.password);
+    await _pump(tester, overrides: [
+      authServiceProvider.overrideWithValue(auth),
+      cloudApiProvider.overrideWithValue(FakeCloudApi(FakeCloudServer())),
+    ]);
+    expect(find.text('Members'), findsNothing);
+    await tester.tap(find.text('Cloud'));
+    await tester.pumpAndSettle();
+    expect(find.text('Members'), findsOneWidget);
   });
 }

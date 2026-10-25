@@ -48,3 +48,23 @@ final syncEngineProvider = Provider<SyncEngine?>((ref) {
   engine.start();
   return engine;
 });
+
+/// The user's role in the open database: always 'owner' for local ones. Offline, the last role
+/// seen; never seen → 'viewer' (safest).
+final currentRoleProvider = FutureProvider<String>((ref) async {
+  final cloudId = ref.watch(openStoreProvider)?.cloudId;
+  if (cloudId == null) return 'owner';
+  final registry = ref.read(registryProvider);
+  final cached = await registry.roleFor(cloudId);
+  final api = ref.watch(cloudApiProvider);
+  if (api == null) return cached ?? 'viewer';
+  try {
+    final role = await api.myRole(cloudId) ?? 'viewer';
+    await registry.rememberRole(cloudId, role);
+    return role;
+  } on CloudOffline {
+    return cached ?? 'viewer';
+  } on CloudDenied {
+    return cached ?? 'viewer';
+  }
+});

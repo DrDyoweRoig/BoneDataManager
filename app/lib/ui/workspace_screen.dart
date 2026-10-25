@@ -145,6 +145,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     if (store == null) return const SizedBox.shrink();
     // Keeps the sync engine of a cloud database alive while the workspace is open.
     ref.watch(syncEngineProvider);
+    final canEdit = (ref.watch(currentRoleProvider).value ?? 'viewer') != 'viewer';
     // Structure changes (layers, names) also change the Excel file.
     ref.listen(openStoreProvider, (_, _) => _live?.schedule());
     final def = store.def;
@@ -157,6 +158,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       appBar: AppBar(
         title: Text(def.name),
         actions: [
+          if (!canEdit && ref.watch(currentRoleProvider).hasValue) ...[
+            const Chip(avatar: Icon(Icons.visibility_outlined, size: 18), label: Text('Viewer · read only')),
+            const SizedBox(width: 8),
+          ],
           ActionChip(
             avatar: const Icon(Icons.person_outline, size: 18),
             label: Text('Observer: ${_observer ?? '—'}'),
@@ -185,11 +190,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openForm(store),
-        icon: const Icon(Icons.add),
-        label: const Text('New entry'),
-      ),
+      floatingActionButton: canEdit
+          ? FloatingActionButton.extended(
+              onPressed: () => _openForm(store),
+              icon: const Icon(Icons.add),
+              label: const Text('New entry'),
+            )
+          : null,
       body: StreamBuilder<List<Entry>>(
         stream: _entries,
         builder: (context, snap) {
@@ -245,7 +252,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                           const Text('Each bone or tooth you record gets its own Ref ID.'),
                         ]),
                       )
-                    : _table(store, rows, layers),
+                    : _table(store, rows, layers, canEdit: canEdit),
               ),
             ],
           );
@@ -254,9 +261,9 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     );
   }
 
-  Widget _table(LocalStore store, List<Entry> rows, List<Layer> layers) {
+  Widget _table(LocalStore store, List<Entry> rows, List<Layer> layers, {required bool canEdit}) {
     final cols = ['Ref ID', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
-      for (final l in layers) l.name, 'Created by', 'Modified by', ''];
+      for (final l in layers) l.name, 'Created by', 'Modified by', if (canEdit) ''];
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 88),
       child: SingleChildScrollView(
@@ -267,7 +274,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           rows: [
             for (final e in rows)
               DataRow(
-                onSelectChanged: (_) => _openForm(store, e),
+                onSelectChanged: canEdit ? (_) => _openForm(store, e) : null,
                 cells: [
                   DataCell(Text(e.refId, style: const TextStyle(fontWeight: FontWeight.w600))),
                   DataCell(Text(elementName(e.data))),
@@ -279,11 +286,12 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                   for (final l in layers) DataCell(Text(cellText(l, e.data.values[l.id]))),
                   DataCell(Text(e.createdBy)),
                   DataCell(Text(e.modifiedBy)),
-                  DataCell(IconButton(
-                    tooltip: 'Delete entry',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _delete(store, e),
-                  )),
+                  if (canEdit)
+                    DataCell(IconButton(
+                      tooltip: 'Delete entry',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _delete(store, e),
+                    )),
                 ],
               ),
           ],

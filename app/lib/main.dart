@@ -10,6 +10,7 @@ import 'state/cloud_providers.dart';
 import 'state/providers.dart';
 import 'ui/backup_scheduler.dart';
 import 'ui/home_screen.dart';
+import 'ui/members_screen.dart';
 import 'ui/settings_screen.dart';
 import 'ui/structure_screen.dart';
 import 'ui/theme.dart';
@@ -35,6 +36,8 @@ class BoneDataManagerApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final store = ref.watch(openStoreProvider);
+    final isOwner = ref.watch(currentRoleProvider).value == 'owner';
+    final api = ref.watch(cloudApiProvider);
     return MaterialApp(
       title: 'Bone Data Manager',
       debugShowCheckedModeBanner: false,
@@ -46,6 +49,16 @@ class BoneDataManagerApp extends ConsumerWidget {
           : WorkspaceScreen(
               key: ObjectKey(store),
               extraActions: [
+                if (isOwner && store.cloudId != null && api != null)
+                  Builder(
+                    builder: (context) => IconButton(
+                      tooltip: 'Members',
+                      icon: const Icon(Icons.group_outlined),
+                      onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => MembersScreen(api: api, cloudId: store.cloudId!))),
+                    ),
+                  ),
+                if (isOwner)
                 Builder(
                   builder: (context) => IconButton(
                     tooltip: 'Structure',
@@ -53,6 +66,7 @@ class BoneDataManagerApp extends ConsumerWidget {
                     onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => StructureScreen(
                             store: store,
+                            api: api,
                             onSaved: () => ref.read(openStoreProvider.notifier).definitionChanged()))),
                   ),
                 ),

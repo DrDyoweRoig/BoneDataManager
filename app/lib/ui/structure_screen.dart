@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../cloud/cloud_api.dart';
 import '../data/local_store.dart';
 import '../ids/ref_id.dart';
 import '../schema/database_def.dart';
@@ -10,9 +11,12 @@ import 'wizard/layer_editor.dart';
 
 /// Edit name, Ref ID format, bones and layers of an existing database.
 class StructureScreen extends StatefulWidget {
-  const StructureScreen({super.key, required this.store, this.onSaved});
+  const StructureScreen({super.key, required this.store, this.onSaved, this.api});
 
   final LocalStore store;
+
+  /// Needed for cloud databases: structure changes go to the server first.
+  final CloudApi? api;
   final VoidCallback? onSaved;
 
   @override
@@ -71,14 +75,25 @@ class _StructureScreenState extends State<StructureScreen> {
     if (_nameError != null || _prefixError != null || _error != null) return;
     final orphans = (await widget.store.allEntries()).where((e) => !_elements.contains(e.data.elementId)).length;
     if (orphans > 0 && !await _confirmOrphans(orphans)) return;
+    final updated = _def.copyWith(
+      name: _name.text.trim(),
+      prefix: _prefix.text,
+      digits: _digits,
+      selectedElements: _elements,
+      layers: _layers,
+    );
     try {
-      await widget.store.updateDefinition(_def.copyWith(
-        name: _name.text.trim(),
-        prefix: _prefix.text,
-        digits: _digits,
-        selectedElements: _elements,
-        layers: _layers,
-      ));
+      if (widget.store.cloudId != null) {
+        if (widget.api == null) throw const CloudOffline();
+        await widget.api!.updateDefinition(updated);
+      }
+      await widget.store.updateDefinition(updated);
+    } on CloudOffline {
+      if (mounted) setState(() => _error = 'Structure changes need an internet connection.');
+      return;
+    } on CloudDenied catch (e) {
+      if (mounted) setState(() => _error = e.message);
+      return;
     } catch (e) {
       if (mounted) setState(() => _error = "Couldn't save: $e");
       return;

@@ -4,16 +4,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../catalog/catalog.dart';
+import '../../cloud/cloud_api.dart';
+import '../../cloud/cloud_create.dart';
 import '../../data/files.dart';
 import '../../data/local_store.dart';
 import '../../ids/ref_id.dart';
 import '../../schema/database_def.dart';
 import '../../schema/layer.dart';
+import '../../state/cloud_providers.dart';
 import '../../state/providers.dart';
+import '../members_screen.dart';
+import '../widgets/select_chips.dart';
 import 'bones_picker.dart';
 import 'layer_editor.dart';
-
-const _steps = ['Name', 'Reference ID', 'Bones', 'Layers', 'Review'];
 
 class WizardScreen extends ConsumerStatefulWidget {
   const WizardScreen({super.key});
@@ -31,6 +34,16 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
   List<Layer> _layers = [];
   String? _error;
   bool _creating = false;
+
+  /// Cloud database (shared) instead of a local file only.
+  bool _cloud = false;
+  String? _storageHint;
+  final List<Member> _members = [];
+  final _memberEmail = TextEditingController();
+  String _memberRole = 'editor';
+  String? _memberError;
+
+  List<String> get _steps => ['Name', 'Reference ID', 'Bones', 'Layers', if (_cloud) 'Members', 'Review'];
 
   /// Folder the database (and its Excel file) is created in.
   String? _folder;
@@ -57,12 +70,34 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
         ),
       );
 
-  String? _validateStep() => switch (_step) {
-        0 => validateName(_name.text),
-        1 => validatePrefix(_prefix.text),
-        2 => _elements.isEmpty ? 'Select at least one bone or teeth' : null,
+  String? _validateStep() => switch (_steps[_step]) {
+        'Name' => validateName(_name.text),
+        'Reference ID' => validatePrefix(_prefix.text),
+        'Bones' => _elements.isEmpty ? 'Select at least one bone or teeth' : null,
         _ => null,
       };
+
+  void _setCloud(bool cloud) {
+    final signedIn = ref.read(signedInEmailProvider).value != null && ref.read(cloudApiProvider) != null;
+    setState(() {
+      _storageHint = cloud && !signedIn ? 'Sign in to create cloud databases' : null;
+      _cloud = cloud && signedIn;
+    });
+  }
+
+  void _addMember() {
+    final email = _memberEmail.text.trim().toLowerCase();
+    final error = validateMemberEmail(email) ??
+        (_members.any((m) => m.email == email) ? 'Already added' : null) ??
+        (email == ref.read(signedInEmailProvider).value ? "You're the owner already" : null);
+    setState(() {
+      _memberError = error;
+      if (error == null) {
+        _members.add((email: email, role: _memberRole));
+        _memberEmail.clear();
+      }
+    });
+  }
 
   void _next() {
     final e = _validateStep();
@@ -98,8 +133,19 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
         ],
       );
       final file = freeDatabaseFile(_folder ?? settings.databasesDir, def.name);
-      await ref.read(openStoreProvider.notifier).set(LocalStore.create(file, def));
+      await ref.read(openStoreProvider.notifier).set(_cloud
+          ? createCloudDatabase(
+              api: ref.read(cloudApiProvider)!,
+              def: def,
+              members: _members,
+              file: file,
+              deviceId: settings.deviceId)
+          : LocalStore.create(file, def));
       if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
+    } on CloudOffline {
+      _failCreate('Creating a cloud database needs an internet connection.');
+    } on CloudDenied catch (e) {
+      _failCreate(e.message);
     } catch (e) {
       if (mounted) {
         setState(() => _creating = false);
@@ -108,14 +154,21 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
     }
   }
 
+  void _failCreate(String message) {
+    if (!mounted) return;
+    setState(() => _creating = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    ref.watch(signedInEmailProvider); // keep sign-in state current for the Storage choice
     return Scaffold(
       appBar: AppBar(title: const Text('Create a new database')),
       body: Column(
         children: [
-          _StepBar(current: _step),
+          _StepBar(current: _step, steps: _steps),
           const Divider(height: 1),
           Expanded(
             child: Center(
@@ -164,8 +217,8 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
               Text(sub, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           ]),
         );
-    switch (_step) {
-      case 0:
+    switch (_steps[_step]) {
+      case 'Name':
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           heading('Name your database'),
           TextField(
@@ -177,12 +230,31 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
             onSubmitted: (_) => _next(),
           ),
           const SizedBox(height: 16),
+          const SizedBox(height: 4),
+          const Text('Storage'),
+          const SizedBox(height: 8),
+          SelectChips<bool>(
+            values: const [false, true],
+            label: (c) => c ? 'Cloud' : 'Local',
+            selected: {_cloud},
+            multi: false,
+            onChanged: (s) => _setCloud(s.isNotEmpty && s.single),
+          ),
+          const SizedBox(height: 4),
+          Text(
+              _storageHint ??
+                  (_cloud
+                      ? 'Shared with the people you add. This computer also keeps a copy for offline work.'
+                      : 'Only on this computer. You can move it to the cloud later.'),
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: _storageHint != null ? theme.colorScheme.error : null)),
+          const SizedBox(height: 16),
           _folderTile(),
           const SizedBox(height: 4),
           Text('An Excel file with the same name is kept next to it and updated as you work.',
               style: theme.textTheme.bodySmall),
         ]);
-      case 1:
+      case 'Reference ID':
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           heading('Reference ID', 'Every entry gets a number automatically. Add an optional prefix.'),
           TextField(
@@ -215,7 +287,7 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
             ),
           ),
         ]);
-      case 2:
+      case 'Bones':
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           heading('Which bones are you planning to observe?', 'Paired bones will ask for Left or Right.'),
           BonesPicker(selected: _elements, onChanged: (s) => setState(() {
@@ -223,7 +295,7 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
                 _error = null;
               })),
         ]);
-      case 3:
+      case 'Layers':
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           heading('Layers', 'Extra fields to fill in for each entry. You can change them later.'),
           LayersEditor(
@@ -232,6 +304,45 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
             onChanged: (l) => setState(() => _layers = l),
           ),
         ]);
+      case 'Members':
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          heading('Members', 'You are the owner. Add the people who will work on this database.'),
+          TextField(
+            key: const Key('wizard-member-email'),
+            controller: _memberEmail,
+            decoration: InputDecoration(labelText: 'Email', hintText: 'name@lab.org', errorText: _memberError),
+            onChanged: (_) => setState(() => _memberError = null),
+            onSubmitted: (_) => _addMember(),
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: SelectChips<String>(
+                values: const ['editor', 'viewer', 'owner'],
+                label: (r) => kRoleLabels[r]!,
+                selected: {_memberRole},
+                multi: false,
+                onChanged: (s) => setState(() => _memberRole = s.isEmpty ? _memberRole : s.single),
+              ),
+            ),
+            OutlinedButton.icon(onPressed: _addMember, icon: const Icon(Icons.person_add_alt), label: const Text('Add')),
+          ]),
+          const SizedBox(height: 12),
+          for (final m in _members)
+            Card.outlined(
+              child: ListTile(
+                title: Text(m.email),
+                subtitle: Text(kRoleLabels[m.role]!),
+                trailing: IconButton(
+                  tooltip: 'Remove ${m.email}',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() => _members.remove(m)),
+                ),
+              ),
+            ),
+          if (_members.isEmpty)
+            Text('You can also add members later.', style: theme.textTheme.bodySmall),
+        ]);
       default:
         final bones = kBones.where((b) => _elements.contains(b.id)).length;
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -239,7 +350,12 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
           Card.outlined(
             child: Column(children: [
               ListTile(title: const Text('Name'), trailing: Text(_name.text.trim())),
+              ListTile(title: const Text('Storage'), trailing: Text(_cloud ? 'Cloud' : 'Local')),
               ListTile(title: const Text('Saved in'), subtitle: Text(_folder ?? '…')),
+              if (_cloud)
+                ListTile(
+                    title: const Text('Members'),
+                    trailing: Text(_members.isEmpty ? 'Only you' : '${_members.length + 1} people')),
               ListTile(title: const Text('First Ref ID'), trailing: Text(formatRefId(_prefix.text, _digits, 1))),
               ListTile(
                 title: const Text('Elements'),
@@ -260,9 +376,10 @@ class _WizardScreenState extends ConsumerState<WizardScreen> {
 }
 
 class _StepBar extends StatelessWidget {
-  const _StepBar({required this.current});
+  const _StepBar({required this.current, required this.steps});
 
   final int current;
+  final List<String> steps;
 
   @override
   Widget build(BuildContext context) {
@@ -271,7 +388,7 @@ class _StepBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Row(
         children: [
-          for (var i = 0; i < _steps.length; i++) ...[
+          for (var i = 0; i < steps.length; i++) ...[
             CircleAvatar(
               radius: 14,
               backgroundColor: i <= current ? scheme.primary : scheme.surfaceContainerHighest,
@@ -282,11 +399,11 @@ class _StepBar extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Flexible(
-              child: Text(_steps[i],
+              child: Text(steps[i],
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontWeight: i == current ? FontWeight.w600 : FontWeight.w400)),
             ),
-            if (i < _steps.length - 1)
+            if (i < steps.length - 1)
               const Expanded(child: Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Divider())),
           ],
         ],

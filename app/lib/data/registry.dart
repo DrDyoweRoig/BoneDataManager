@@ -44,6 +44,21 @@ class Registry {
     await (await SharedPreferences.getInstance()).setString(_copiesKey, jsonEncode(m));
   }
 
+  static const _rolesKey = 'cloud_roles';
+
+  /// Last role seen for a cloud database, so the right buttons show while offline.
+  Future<String?> roleFor(String cloudId) async => (await _map(_rolesKey))[cloudId];
+
+  Future<void> rememberRole(String cloudId, String role) async {
+    final m = await _map(_rolesKey)..[cloudId] = role;
+    await (await SharedPreferences.getInstance()).setString(_rolesKey, jsonEncode(m));
+  }
+
+  Future<Map<String, String>> _map(String key) async {
+    final raw = (await SharedPreferences.getInstance()).getString(key);
+    return raw == null ? {} : Map<String, String>.from(jsonDecode(raw) as Map);
+  }
+
   Future<Map<String, String>> _copies() async {
     final raw = (await SharedPreferences.getInstance()).getString(_copiesKey);
     return raw == null ? {} : Map<String, String>.from(jsonDecode(raw) as Map);

@@ -176,12 +176,25 @@ class FakeCloudApi implements CloudApi {
   @override
   Future<void> setMember(String db, String email, String role) async {
     _check();
-    server.members.putIfAbsent(db, () => {})[email.toLowerCase()] = role;
+    final m = server.members.putIfAbsent(db, () => {});
+    final before = Map.of(m);
+    m[email.toLowerCase()] = role;
+    _keepAnOwner(db, before);
   }
 
   @override
   Future<void> removeMember(String db, String email) async {
     _check();
+    final before = Map<String, String>.of(server.members[db] ?? {});
     server.members[db]?.remove(email.toLowerCase());
+    _keepAnOwner(db, before);
+  }
+
+  // Mirrors the members_keep_an_owner trigger.
+  void _keepAnOwner(String db, Map<String, String> before) {
+    if (!(server.members[db] ?? {}).containsValue('owner')) {
+      server.members[db] = before;
+      throw const CloudDenied('A database needs at least one owner');
+    }
   }
 }
