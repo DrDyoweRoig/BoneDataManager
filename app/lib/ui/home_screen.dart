@@ -4,7 +4,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../state/cloud_providers.dart';
 import '../state/providers.dart';
+import 'auth/sign_in_screen.dart';
 import 'wizard/wizard_screen.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -32,6 +34,7 @@ class HomeScreen extends ConsumerWidget {
     final theme = Theme.of(context);
     final recents = ref.watch(recentsProvider).value ?? const [];
     return Scaffold(
+      appBar: AppBar(actions: const [_AccountButton(), SizedBox(width: 8)]),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
@@ -77,6 +80,35 @@ class HomeScreen extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Sign in, or the signed-in email with a Sign out menu. Hidden when the app has no cloud setup.
+class _AccountButton extends ConsumerWidget {
+  const _AccountButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authServiceProvider);
+    if (auth == null) return const SizedBox.shrink();
+    final email = ref.watch(signedInEmailProvider).value;
+    if (email == null) {
+      return TextButton.icon(
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => SignInScreen(auth: auth))),
+        icon: const Icon(Icons.login),
+        label: const Text('Sign in'),
+      );
+    }
+    return MenuAnchor(
+      builder: (context, controller, _) => TextButton.icon(
+        onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+        icon: const Icon(Icons.account_circle_outlined),
+        label: Text(email),
+      ),
+      menuChildren: [
+        MenuItemButton(leadingIcon: const Icon(Icons.logout), onPressed: auth.signOut, child: const Text('Sign out')),
+      ],
     );
   }
 }

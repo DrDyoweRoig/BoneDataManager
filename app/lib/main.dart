@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
+import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
+import 'cloud/auth_service.dart';
+import 'cloud/cloud_config.dart';
+import 'cloud/supabase_cloud_api.dart';
+import 'state/cloud_providers.dart';
 import 'state/providers.dart';
 import 'ui/backup_scheduler.dart';
 import 'ui/home_screen.dart';
@@ -9,8 +15,18 @@ import 'ui/structure_screen.dart';
 import 'ui/theme.dart';
 import 'ui/workspace_screen.dart';
 
-void main() {
-  runApp(const ProviderScope(child: BoneDataManagerApp()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final overrides = <Override>[];
+  if (isCloudConfigured) {
+    await Supabase.initialize(url: kSupabaseUrl, publishableKey: kSupabaseAnonKey);
+    final client = Supabase.instance.client;
+    overrides.addAll([
+      authServiceProvider.overrideWithValue(SupabaseAuthService(client)),
+      cloudApiProvider.overrideWithValue(SupabaseCloudApi(client)),
+    ]);
+  }
+  runApp(ProviderScope(overrides: overrides, child: const BoneDataManagerApp()));
 }
 
 class BoneDataManagerApp extends ConsumerWidget {
