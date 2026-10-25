@@ -12,6 +12,7 @@ import '../export/cell_format.dart';
 import '../export/excel_export.dart';
 import '../export/live_excel.dart';
 import '../schema/layer.dart';
+import '../state/cloud_providers.dart';
 import '../state/providers.dart';
 import 'entry_form_screen.dart';
 import 'observer_dialog.dart';
@@ -102,8 +103,9 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Future<void> _openForm(LocalStore store, [Entry? entry]) async {
     if (_observer == null) await _askObserver(required: true);
     if (_observer == null || !mounted) return;
-    await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => EntryFormScreen(store: store, observer: _observer!, entry: entry)));
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => EntryFormScreen(
+            store: store, writer: ref.read(syncEngineProvider), observer: _observer!, entry: entry)));
   }
 
   Future<void> _delete(LocalStore store, Entry e) async {
@@ -118,7 +120,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         ],
       ),
     );
-    if (ok == true) await store.deleteEntry(e.id, _observer ?? '');
+    if (ok == true) await (ref.read(syncEngineProvider) ?? store).deleteEntry(e.id, _observer ?? '');
   }
 
   Future<void> _export(LocalStore store) async {
@@ -141,6 +143,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Widget build(BuildContext context) {
     final store = ref.watch(openStoreProvider);
     if (store == null) return const SizedBox.shrink();
+    // Keeps the sync engine of a cloud database alive while the workspace is open.
+    ref.watch(syncEngineProvider);
     // Structure changes (layers, names) also change the Excel file.
     ref.listen(openStoreProvider, (_, _) => _live?.schedule());
     final def = store.def;

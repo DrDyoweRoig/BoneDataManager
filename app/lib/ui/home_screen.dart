@@ -4,6 +4,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../cloud/cloud_api.dart';
+import '../cloud/cloud_open.dart';
 import '../state/cloud_providers.dart';
 import '../state/providers.dart';
 import 'auth/sign_in_screen.dart';
@@ -22,11 +24,72 @@ class HomeScreen extends ConsumerWidget {
     }
   }
 
+  Future<void> _openCloud(BuildContext context, WidgetRef ref, CloudDb db) async {
+    final path = await ref.read(registryProvider).copyFor(db.id);
+    if (path != null && File(path).existsSync()) {
+      if (context.mounted) await _open(context, ref, path);
+      return;
+    }
+    final settings = await ref.read(settingsProvider.future);
+    if (!context.mounted) return;
+    final folder = await showDialog<String>(
+        context: context, builder: (_) => _CopyFolderDialog(name: db.name, initial: settings.databasesDir));
+    if (folder == null || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(openStoreProvider.notifier).set(createLocalCopy(
+          api: ref.read(cloudApiProvider)!, cloudId: db.id, folder: folder, deviceId: settings.deviceId));
+    } on CloudOffline {
+      messenger.showSnackBar(const SnackBar(
+          content: Text("You're offline. Connect to the internet to open this database for the first time.")));
+    } on CloudDenied catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   Future<void> _pick(BuildContext context, WidgetRef ref) async {
     final picked = await FilePicker.pickFile(
         dialogTitle: 'Open an existing database', type: FileType.custom, allowedExtensions: ['sqlite']);
     final path = picked?.path;
     if (path != null && context.mounted) await _open(context, ref, path);
+  }
+
+  List<Widget> _cloudSection(BuildContext context, WidgetRef ref, ThemeData theme) {
+    if (ref.watch(signedInEmailProvider).value == null) return const [];
+    final dbs = ref.watch(cloudDatabasesProvider);
+    return [
+      const SizedBox(height: 32),
+      Text('Your cloud databases', style: theme.textTheme.titleSmall),
+      const SizedBox(height: 8),
+      dbs.when(
+        loading: () => const Padding(padding: EdgeInsets.all(16), child: LinearProgressIndicator()),
+        error: (e, _) => Card.outlined(
+          child: ListTile(
+            leading: const Icon(Icons.cloud_off_outlined),
+            title: Text(e is CloudOffline
+                ? "Couldn't load your cloud databases. Check your internet connection."
+                : "Couldn't load your cloud databases: $e"),
+            trailing: TextButton(onPressed: () => ref.invalidate(cloudDatabasesProvider), child: const Text('Retry')),
+          ),
+        ),
+        data: (list) => list.isEmpty
+            ? const Card.outlined(
+                child: ListTile(
+                    leading: Icon(Icons.cloud_outlined),
+                    title: Text('None yet. Create one, or ask an owner to add your email.')))
+            : Card.outlined(
+                child: Column(children: [
+                  for (final db in list)
+                    ListTile(
+                      leading: const Icon(Icons.cloud_outlined),
+                      title: Text(db.name),
+                      trailing: Chip(label: Text(_roleLabels[db.role] ?? db.role)),
+                      onTap: () => _openCloud(context, ref, db),
+                    ),
+                ]),
+              ),
+      ),
+    ];
   }
 
   @override
@@ -60,6 +123,7 @@ class HomeScreen extends ConsumerWidget {
                 label: const Text('Open an existing database'),
                 style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(56)),
               ),
+              ..._cloudSection(context, ref, theme),
               if (recents.isNotEmpty) ...[
                 const SizedBox(height: 32),
                 Text('Recent', style: theme.textTheme.titleSmall),
@@ -85,6 +149,54 @@ class HomeScreen extends ConsumerWidget {
 }
 
 /// Sign in, or the signed-in email with a Sign out menu. Hidden when the app has no cloud setup.
+const _roleLabels = {'owner': 'Owner', 'editor': 'Editor', 'viewer': 'Viewer'};
+
+class _CopyFolderDialog extends StatefulWidget {
+  const _CopyFolderDialog({required this.name, required this.initial});
+
+  final String name;
+  final String initial;
+
+  @override
+  State<_CopyFolderDialog> createState() => _CopyFolderDialogState();
+}
+
+class _CopyFolderDialogState extends State<_CopyFolderDialog> {
+  late String _folder = widget.initial;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text('Open ${widget.name}'),
+        content: SizedBox(
+          width: 460,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text("This computer keeps its own copy, so you can keep working offline. "
+                "Its Excel file is saved next to it."),
+            const SizedBox(height: 16),
+            Card.outlined(
+              child: ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: const Text('Saved in'),
+                subtitle: Text(_folder),
+                trailing: TextButton(
+                  onPressed: () async {
+                    final dir = await FilePicker.getDirectoryPath(
+                        dialogTitle: 'Where to keep this copy', initialDirectory: _folder);
+                    if (dir != null) setState(() => _folder = dir);
+                  },
+                  child: const Text('Change folder'),
+                ),
+              ),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, _folder), child: const Text('Open')),
+        ],
+      );
+}
+
 class _AccountButton extends ConsumerWidget {
   const _AccountButton();
 

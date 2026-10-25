@@ -5,6 +5,7 @@ import '../catalog/catalog.dart';
 import '../common/enums.dart';
 import '../data/local_store.dart';
 import '../entries/entry.dart';
+import '../entries/entry_writer.dart';
 import '../ids/ref_id.dart';
 import '../schema/layer.dart';
 import '../teeth/tooth_selection.dart';
@@ -15,9 +16,12 @@ enum _Mode { bone, teeth }
 /// New entry (one bone, or several teeth at once) or edit of an existing [entry].
 /// Pops `true` after saving.
 class EntryFormScreen extends StatefulWidget {
-  const EntryFormScreen({super.key, required this.store, required this.observer, this.entry});
+  const EntryFormScreen({super.key, required this.store, required this.observer, this.entry, this.writer});
 
   final LocalStore store;
+
+  /// Where saves go; the sync engine for cloud databases. Defaults to [store].
+  final EntryWriter? writer;
   final String observer;
   final Entry? entry;
 
@@ -132,10 +136,11 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
 
     setState(() => _saving = true);
     try {
+      final writer = widget.writer ?? widget.store;
       if (_editing) {
-        await widget.store.updateEntry(widget.entry!.id, drafts.single, widget.observer);
+        await writer.updateEntry(widget.entry!.id, drafts.single, widget.observer);
       } else {
-        await widget.store.createEntries(drafts, widget.observer);
+        await writer.createEntries(drafts, widget.observer);
       }
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {

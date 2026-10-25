@@ -34,6 +34,21 @@ class Registry {
 
   Future<void> forget(String path) async => _save((await recents()).where((d) => d.path != path).toList());
 
+  static const _copiesKey = 'cloud_copies';
+
+  /// Path of this computer's copy of a cloud database, if it has one.
+  Future<String?> copyFor(String cloudId) async => (await _copies())[cloudId];
+
+  Future<void> rememberCopy(String cloudId, String path) async {
+    final m = await _copies()..[cloudId] = path;
+    await (await SharedPreferences.getInstance()).setString(_copiesKey, jsonEncode(m));
+  }
+
+  Future<Map<String, String>> _copies() async {
+    final raw = (await SharedPreferences.getInstance()).getString(_copiesKey);
+    return raw == null ? {} : Map<String, String>.from(jsonDecode(raw) as Map);
+  }
+
   Future<void> _save(List<RecentDb> list) async {
     await (await SharedPreferences.getInstance()).setStringList(_key, [
       for (final d in list)

@@ -23,4 +23,14 @@ void main() {
     await r.forget('C:/a.sqlite');
     expect(await r.recents(), isEmpty);
   });
+
+  test('remembers the local copy of each cloud database', () async {
+    final r = Registry();
+    expect(await r.copyFor('cloud-1'), isNull);
+    await r.rememberCopy('cloud-1', 'C:/a/Site.sqlite');
+    await r.rememberCopy('cloud-2', 'C:/a/Other.sqlite');
+    expect(await r.copyFor('cloud-1'), 'C:/a/Site.sqlite');
+    await r.rememberCopy('cloud-1', 'D:/moved/Site.sqlite');
+    expect(await r.copyFor('cloud-1'), 'D:/moved/Site.sqlite');
+  });
 }
