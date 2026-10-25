@@ -172,8 +172,6 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       dialogTitle: 'Export Excel',
       fileName: exportFileName(store.def.name, now),
       bytes: Uint8List.fromList(bytes),
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
     );
     if (uri != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported to ${uri.toFilePath()}')));
