@@ -197,3 +197,19 @@ Els permisos s'apliquen al servidor (Row Level Security de Supabase), no només 
 - Porcions d'os (epífisi, diàfisi…).
 - Odontograma visual.
 - Crear o modificar l'estructura des del mòbil.
+
+## 16. Canvis acordats després del Pla 1 (2026-10-23 → 2026-10-25)
+
+**Ja implementats al Pla 1:**
+- Side i Jaw tenen l'opció **Unknown** (no marcada per defecte; cal triar sempre).
+- Backups: una carpeta per base de dades, `Backups/<nom>/<nom> AAAA-MM-DD HH-mm.sqlite|.xlsx`.
+- En crear una base de dades es tria la **carpeta**. Al costat de `<nom>.sqlite` hi ha sempre `<nom>.xlsx`, reescrit automàticament després de cada canvi, amb botó **Update Excel** i avís si el fitxer està obert a Excel.
+- Una entrada d'un element que s'ha tret de la base de dades continua sent editable; en editar, es conserven els valors de layers que ja no s'apliquen.
+
+**Decisions per al Pla 2 (núvol):**
+- Backend: **Supabase**, projecte a una regió **europea**. L'app només coneix la URL i la clau *anon/publishable*; mai la clau *service_role*.
+- Les bases de dades locals es poden pujar amb **Move to cloud** (a Structure): es pugen definició i entrades amb els mateixos Ref IDs i el comptador; el fitxer local queda enllaçat al núvol.
+- El wizard permet triar **Local** o **Cloud** (Cloud només amb sessió iniciada) i, per a Cloud, afegir membres.
+- **Membres per correu:** l'Owner escriu correu + rol. Si la persona no té compte, la base de dades li apareix quan es registra amb aquest correu. L'app no envia correus propis.
+- A l'escriptori, una base de dades del núvol té sempre una **còpia local** (SQLite a la carpeta triada) que és la que fa servir la interfície; l'Excel automàtic i els backups funcionen igual que en local.
+- Les bases de dades locals continuen funcionant sense compte.
