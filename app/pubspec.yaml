@@ -43,6 +43,8 @@ dependencies:
   uuid: ^4.6.0
   intl: ^0.20.3
   path: ^1.9.1
+  supabase_flutter: ^2.18.3
+  connectivity_plus: ^7.3.2
 
 dev_dependencies:
   flutter_test:
