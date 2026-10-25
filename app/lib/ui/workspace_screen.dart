@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../catalog/catalog.dart';
 import '../cloud/sync_engine.dart';
+import '../common/platform.dart';
 import '../common/enums.dart';
 import '../data/local_store.dart';
 import '../entries/entry.dart';
@@ -17,6 +20,7 @@ import '../schema/layer.dart';
 import '../state/cloud_providers.dart';
 import '../state/providers.dart';
 import 'conflict_dialog.dart';
+import 'entry_card.dart';
 import 'entry_form_screen.dart';
 import 'observer_dialog.dart';
 import 'sync_status_chip.dart';
@@ -53,7 +57,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _syncEvents?.cancel();
     _engine = engine;
     _syncEvents = engine?.events.listen((e) {
-      if (!mounted) return;
+      // Phones show the offline banner instead; their saves never use reserved IDs.
+      if (!mounted || isMobile) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(syncEventMessage(e)), duration: const Duration(seconds: 8)));
     });
@@ -63,7 +68,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   void initState() {
     super.initState();
     final store = _store;
-    if (store?.file != null) {
+    if (store?.file != null && !isMobile) {
       _live = LiveExcel(store!, exportedBy: () => _observer ?? '')..start();
       _live!.status.addListener(_onExcelStatus);
     }
@@ -82,17 +87,25 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     if (ok == true) _warnedExcel = false;
     if (ok != false || _warnedExcel || !mounted) return;
     _warnedExcel = true;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text("Couldn't update the Excel file. If it's open in Excel, close it and press Update Excel.")));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Couldn't update the Excel file. If it's open in Excel, close it and press Update Excel."),
+      ),
+    );
   }
 
   Future<void> _updateExcel() async {
     final ok = await _live!.update();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok
-            ? 'Excel updated: ${excelFileFor(_store!.file!).path}'
-            : "Couldn't update the Excel file. If it's open in Excel, close it and try again.")));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Excel updated: ${excelFileFor(_store!.file!).path}'
+              : "Couldn't update the Excel file. If it's open in Excel, close it and try again.",
+        ),
+      ),
+    );
   }
 
   Future<void> _askObserver({bool required = false}) async {
@@ -112,8 +125,15 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final q = _search.trim().toLowerCase();
     if (q.isEmpty) return true;
     final text = [
-      e.refId, elementName(d), elementRegion(d).label, d.dentition?.label, d.toothType, d.jaw?.label, d.side?.label,
-      e.createdBy, e.modifiedBy,
+      e.refId,
+      elementName(d),
+      elementRegion(d).label,
+      d.dentition?.label,
+      d.toothType,
+      d.jaw?.label,
+      d.side?.label,
+      e.createdBy,
+      e.modifiedBy,
       for (final l in layers) cellText(l, d.values[l.id]),
     ].whereType<String>().join(' ').toLowerCase();
     return text.contains(q);
@@ -122,9 +142,12 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   Future<void> _openForm(LocalStore store, [Entry? entry]) async {
     if (_observer == null) await _askObserver(required: true);
     if (_observer == null || !mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => EntryFormScreen(
-            store: store, writer: ref.read(syncEngineProvider), observer: _observer!, entry: entry)));
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            EntryFormScreen(store: store, writer: ref.read(syncEngineProvider), observer: _observer!, entry: entry),
+      ),
+    );
   }
 
   Future<void> _delete(LocalStore store, Entry e) async {
@@ -144,8 +167,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
 
   Future<void> _export(LocalStore store) async {
     final now = DateTime.now();
-    final bytes = buildWorkbookBytes(store.def, await store.allEntries(),
-        exportedBy: _observer ?? '', exportedAt: now);
+    final bytes = buildWorkbookBytes(store.def, await store.allEntries(), exportedBy: _observer ?? '', exportedAt: now);
     final uri = await FilePicker.saveFile(
       dialogTitle: 'Export Excel',
       fileName: exportFileName(store.def.name, now),
@@ -157,6 +179,92 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported to ${uri.toFilePath()}')));
     }
   }
+
+  /// Phones: write the export to a temp file and open the Android share sheet.
+  Future<void> _share(LocalStore store) async {
+    final now = DateTime.now();
+    final bytes = buildWorkbookBytes(store.def, await store.allEntries(), exportedBy: _observer ?? '', exportedAt: now);
+    final file = File('${Directory.systemTemp.path}${Platform.pathSeparator}${exportFileName(store.def.name, now)}');
+    await file.writeAsBytes(bytes, flush: true);
+    await SharePlus.instance.share(ShareParams(files: [XFile(file.path)], subject: store.def.name));
+  }
+
+  Widget _filters(List<Entry> all, List<Entry> rows, bool hasTeeth, bool hasBones, ThemeData theme) {
+    final search = TextField(
+      key: const Key('workspace-search'),
+      decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search', isDense: true),
+      onChanged: (v) => setState(() => _search = v),
+    );
+    final chips = <Widget>[
+      if (hasTeeth && hasBones)
+        SelectChips<_Kind>(
+          values: _Kind.values,
+          label: (k) => k == _Kind.bones ? 'Bones' : 'Teeth',
+          selected: _kinds,
+          onChanged: (s) => setState(() => _kinds = s),
+        ),
+      SelectChips<Side>(
+        values: Side.values,
+        label: (s) => s.label,
+        selected: _sides,
+        onChanged: (s) => setState(() => _sides = s),
+      ),
+      if (hasTeeth)
+        SelectChips<Jaw>(
+          values: Jaw.values,
+          label: (j) => j.label,
+          selected: _jaws,
+          onChanged: (s) => setState(() => _jaws = s),
+        ),
+    ];
+    final count = Text('${rows.length} of ${all.length} entries', style: theme.textTheme.bodySmall);
+    if (isMobile) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            search,
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final c in chips) ...[c, const SizedBox(width: 12)],
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            count,
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(width: 280, child: search),
+          ...chips,
+          count,
+        ],
+      ),
+    );
+  }
+
+  Widget _cards(LocalStore store, List<Entry> rows, List<Layer> layers, {required bool canEdit}) => ListView.builder(
+    padding: const EdgeInsets.only(top: 4, bottom: 96),
+    itemCount: rows.length,
+    itemBuilder: (_, i) => EntryCard(
+      entry: rows[i],
+      layers: layers,
+      onTap: canEdit ? () => _openForm(store, rows[i]) : null,
+      onLongPress: canEdit ? () => _delete(store, rows[i]) : null,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -177,46 +285,69 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(def.name),
-        actions: [
-          if (!canEdit && ref.watch(currentRoleProvider).hasValue) ...[
-            const Chip(avatar: Icon(Icons.visibility_outlined, size: 18), label: Text('Viewer · read only')),
-            const SizedBox(width: 8),
-          ],
-          if (engine != null) ...[
-            SyncStatusChip(
-              status: engine.status,
-              problem: engine.problem,
-              onConflicts: () => showConflictDialog(context, engine, layers),
-            ),
-            const SizedBox(width: 8),
-          ],
-          ActionChip(
-            avatar: const Icon(Icons.person_outline, size: 18),
-            label: Text('Observer: ${_observer ?? '—'}'),
-            onPressed: _askObserver,
-          ),
-          const SizedBox(width: 8),
-          if (_live != null)
-            ValueListenableBuilder<bool?>(
-              valueListenable: _live!.status,
-              builder: (context, ok, _) => TextButton.icon(
-                onPressed: _updateExcel,
-                icon: Icon(
-                  ok == false ? Icons.warning_amber_rounded : (ok == true ? Icons.check_circle_outline : Icons.sync),
-                  color: ok == false ? theme.colorScheme.error : null,
+        actions: isMobile
+            ? [
+                if (engine != null)
+                  SyncStatusChip(
+                    status: engine.status,
+                    problem: engine.problem,
+                    onConflicts: () => showConflictDialog(context, engine, layers),
+                    compact: true,
+                  ),
+                IconButton(
+                  tooltip: 'Observer: ${_observer ?? '—'}',
+                  icon: const Icon(Icons.person_outline),
+                  onPressed: _askObserver,
                 ),
-                label: Text(ok == false ? 'Update Excel (not saved)' : 'Update Excel'),
-              ),
-            ),
-          IconButton(tooltip: 'Export a copy', icon: const Icon(Icons.download), onPressed: () => _export(store)),
-          ...widget.extraActions,
-          IconButton(
-            tooltip: 'Close database',
-            icon: const Icon(Icons.close),
-            onPressed: () => ref.read(openStoreProvider.notifier).close(),
-          ),
-          const SizedBox(width: 8),
-        ],
+                IconButton(tooltip: 'Share Excel', icon: const Icon(Icons.share), onPressed: () => _share(store)),
+                IconButton(
+                  tooltip: 'Close database',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => ref.read(openStoreProvider.notifier).close(),
+                ),
+              ]
+            : [
+                if (!canEdit && ref.watch(currentRoleProvider).hasValue) ...[
+                  const Chip(avatar: Icon(Icons.visibility_outlined, size: 18), label: Text('Viewer · read only')),
+                  const SizedBox(width: 8),
+                ],
+                if (engine != null) ...[
+                  SyncStatusChip(
+                    status: engine.status,
+                    problem: engine.problem,
+                    onConflicts: () => showConflictDialog(context, engine, layers),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                ActionChip(
+                  avatar: const Icon(Icons.person_outline, size: 18),
+                  label: Text('Observer: ${_observer ?? '—'}'),
+                  onPressed: _askObserver,
+                ),
+                const SizedBox(width: 8),
+                if (_live != null)
+                  ValueListenableBuilder<bool?>(
+                    valueListenable: _live!.status,
+                    builder: (context, ok, _) => TextButton.icon(
+                      onPressed: _updateExcel,
+                      icon: Icon(
+                        ok == false
+                            ? Icons.warning_amber_rounded
+                            : (ok == true ? Icons.check_circle_outline : Icons.sync),
+                        color: ok == false ? theme.colorScheme.error : null,
+                      ),
+                      label: Text(ok == false ? 'Update Excel (not saved)' : 'Update Excel'),
+                    ),
+                  ),
+                IconButton(tooltip: 'Export a copy', icon: const Icon(Icons.download), onPressed: () => _export(store)),
+                ...widget.extraActions,
+                IconButton(
+                  tooltip: 'Close database',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => ref.read(openStoreProvider.notifier).close(),
+                ),
+                const SizedBox(width: 8),
+              ],
       ),
       floatingActionButton: canEdit
           ? FloatingActionButton.extended(
@@ -233,53 +364,33 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Wrap(
-                  spacing: 16,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 280,
-                      child: TextField(
-                        key: const Key('workspace-search'),
-                        decoration: const InputDecoration(
-                            prefixIcon: Icon(Icons.search), hintText: 'Search', isDense: true),
-                        onChanged: (v) => setState(() => _search = v),
-                      ),
-                    ),
-                    if (hasTeeth && hasBones)
-                      SelectChips<_Kind>(
-                          values: _Kind.values,
-                          label: (k) => k == _Kind.bones ? 'Bones' : 'Teeth',
-                          selected: _kinds,
-                          onChanged: (s) => setState(() => _kinds = s)),
-                    SelectChips<Side>(
-                        values: Side.values,
-                        label: (s) => s.label,
-                        selected: _sides,
-                        onChanged: (s) => setState(() => _sides = s)),
-                    if (hasTeeth)
-                      SelectChips<Jaw>(
-                          values: Jaw.values,
-                          label: (j) => j.label,
-                          selected: _jaws,
-                          onChanged: (s) => setState(() => _jaws = s)),
-                    Text('${rows.length} of ${all.length} entries', style: theme.textTheme.bodySmall),
-                  ],
+              if (isMobile && engine != null)
+                ValueListenableBuilder<SyncStatus>(
+                  valueListenable: engine.status,
+                  builder: (context, s, _) => s.connection == Connection.offline
+                      ? MaterialBanner(
+                          content: const Text("You're offline. You can browse, but saving needs a connection."),
+                          leading: const Icon(Icons.cloud_off_outlined),
+                          actions: [TextButton(onPressed: engine.syncNow, child: const Text('Retry'))],
+                        )
+                      : const SizedBox.shrink(),
                 ),
-              ),
+              _filters(all, rows, hasTeeth, hasBones, theme),
               const Divider(height: 1),
               Expanded(
                 child: all.isEmpty
                     ? Center(
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Text('Start your first entry', style: theme.textTheme.titleMedium),
-                          const SizedBox(height: 4),
-                          const Text('Each bone or tooth you record gets its own Ref ID.'),
-                        ]),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Start your first entry', style: theme.textTheme.titleMedium),
+                            const SizedBox(height: 4),
+                            const Text('Each bone or tooth you record gets its own Ref ID.'),
+                          ],
+                        ),
                       )
+                    : isMobile
+                    ? _cards(store, rows, layers, canEdit: canEdit)
                     : _table(store, rows, layers, canEdit: canEdit),
               ),
             ],
@@ -290,8 +401,19 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   }
 
   Widget _table(LocalStore store, List<Entry> rows, List<Layer> layers, {required bool canEdit}) {
-    final cols = ['Ref ID', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
-      for (final l in layers) l.name, 'Created by', 'Modified by', if (canEdit) ''];
+    final cols = [
+      'Ref ID',
+      'Element',
+      'Region',
+      'Dentition',
+      'Tooth type',
+      'Jaw',
+      'Side',
+      for (final l in layers) l.name,
+      'Created by',
+      'Modified by',
+      if (canEdit) '',
+    ];
     return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 88),
       child: SingleChildScrollView(
@@ -315,11 +437,13 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
                   DataCell(Text(e.createdBy)),
                   DataCell(Text(e.modifiedBy)),
                   if (canEdit)
-                    DataCell(IconButton(
-                      tooltip: 'Delete entry',
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => _delete(store, e),
-                    )),
+                    DataCell(
+                      IconButton(
+                        tooltip: 'Delete entry',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _delete(store, e),
+                      ),
+                    ),
                 ],
               ),
           ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../catalog/catalog.dart';
+import '../cloud/sync_engine.dart';
 import '../common/enums.dart';
 import '../data/local_store.dart';
 import '../entries/entry.dart';
@@ -143,6 +144,13 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
         await writer.createEntries(drafts, widget.observer);
       }
       if (mounted) Navigator.of(context).pop(true);
+    } on NeedsConnection catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = e.toString();
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
