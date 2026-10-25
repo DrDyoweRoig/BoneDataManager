@@ -45,6 +45,7 @@ dependencies:
   path: ^1.9.1
   supabase_flutter: ^2.18.3
   connectivity_plus: ^7.3.2
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:
