@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
 import 'cloud/auth_service.dart';
 import 'cloud/cloud_config.dart';
+import 'cloud/move_to_cloud.dart';
 import 'cloud/supabase_cloud_api.dart';
 import 'state/cloud_providers.dart';
 import 'state/providers.dart';
@@ -38,6 +39,7 @@ class BoneDataManagerApp extends ConsumerWidget {
     final store = ref.watch(openStoreProvider);
     final isOwner = ref.watch(currentRoleProvider).value == 'owner';
     final api = ref.watch(cloudApiProvider);
+    final signedIn = ref.watch(signedInEmailProvider).value != null;
     return MaterialApp(
       title: 'Bone Data Manager',
       debugShowCheckedModeBanner: false,
@@ -67,6 +69,14 @@ class BoneDataManagerApp extends ConsumerWidget {
                         builder: (_) => StructureScreen(
                             store: store,
                             api: api,
+                            onMoveToCloud: api == null || !signedIn || store.cloudId != null
+                                ? null
+                                : () async {
+                                    final settings = await ref.read(settingsProvider.future);
+                                    await moveToCloud(store, api, settings.deviceId);
+                                    await ref.read(registryProvider).rememberCopy(store.cloudId!, store.file!.path);
+                                    ref.read(openStoreProvider.notifier).definitionChanged();
+                                  },
                             onSaved: () => ref.read(openStoreProvider.notifier).definitionChanged()))),
                   ),
                 ),

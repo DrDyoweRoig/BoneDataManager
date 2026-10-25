@@ -11,12 +11,15 @@ import 'wizard/layer_editor.dart';
 
 /// Edit name, Ref ID format, bones and layers of an existing database.
 class StructureScreen extends StatefulWidget {
-  const StructureScreen({super.key, required this.store, this.onSaved, this.api});
+  const StructureScreen({super.key, required this.store, this.onSaved, this.api, this.onMoveToCloud});
 
   final LocalStore store;
 
   /// Needed for cloud databases: structure changes go to the server first.
   final CloudApi? api;
+
+  /// Set for a local database when the user is signed in: uploads it and links it.
+  final Future<void> Function()? onMoveToCloud;
   final VoidCallback? onSaved;
 
   @override
@@ -64,6 +67,32 @@ class _StructureScreenState extends State<StructureScreen> {
           ),
         ) ??
         false;
+  }
+
+  Future<void> _moveToCloud() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Move to cloud?'),
+        content: const Text('The database and all its entries are uploaded with the same Ref IDs. '
+            'Everyone you add as a member can then open it. This computer keeps working on this file.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Move')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.onMoveToCloud!();
+      messenger.showSnackBar(const SnackBar(content: Text('Moved to the cloud. Add people from the Members button.')));
+      if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
+    } on CloudOffline {
+      if (mounted) setState(() => _error = 'Moving to the cloud needs an internet connection.');
+    } on CloudDenied catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
   }
 
   Future<void> _save() async {
@@ -146,6 +175,17 @@ class _StructureScreenState extends State<StructureScreen> {
                   'Next entry: ${formatRefId(_prefix.text, _digits, widget.store.nextNumber)}. '
                   'Existing Ref IDs never change.',
                   style: theme.textTheme.bodySmall),
+              if (widget.onMoveToCloud != null && widget.store.cloudId == null) ...[
+                title('Cloud'),
+                Card.outlined(
+                  child: ListTile(
+                    leading: const Icon(Icons.cloud_upload_outlined),
+                    title: const Text('Share this database'),
+                    subtitle: const Text('Upload it so other people and computers can work on it.'),
+                    trailing: OutlinedButton(onPressed: _moveToCloud, child: const Text('Move to cloud')),
+                  ),
+                ),
+              ],
               title('Bones'),
               BonesPicker(selected: _elements, onChanged: (s) => setState(() => _elements = s)),
               title('Layers'),

@@ -173,6 +173,16 @@ class LocalStore implements EntryWriter {
     _deviceId = deviceId;
   }
 
+  /// Every row, deleted ones too (for uploads that must keep their numbers taken).
+  Future<List<Entry>> entriesIncludingDeleted() async =>
+      (await (_db.select(_db.entries)..orderBy([(e) => OrderingTerm(expression: e.number)])).get())
+          .map(_toEntry)
+          .toList();
+
+  /// After an upload: the server now holds exactly these versions.
+  Future<void> markAllSynced() =>
+      _db.customUpdate("UPDATE entries SET sync_state = 'synced', base_version = version", updates: {_db.entries});
+
   Future<void> setBlock(int start, int end) async {
     await _db.update(_db.meta).write(MetaCompanion(blockNext: Value(start), blockEnd: Value(end)));
     _block = (next: start, end: end);

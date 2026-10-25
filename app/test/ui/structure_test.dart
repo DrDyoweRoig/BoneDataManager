@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _femur = EntryDraft(elementId: 'femur', side: Side.left);
 
-Future<LocalStore> _pump(WidgetTester tester) async {
+Future<LocalStore> _pump(WidgetTester tester, {Future<void> Function()? onMoveToCloud}) async {
   tester.view.physicalSize = const Size(1200, 1800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -26,7 +26,9 @@ Future<LocalStore> _pump(WidgetTester tester) async {
   }))!;
   addTearDown(() => tester.runAsync(store.close));
   await tester.pumpWidget(
-      MaterialApp(theme: buildTheme(Brightness.light), home: StructureScreen(store: store)));
+      MaterialApp(
+          theme: buildTheme(Brightness.light),
+          home: StructureScreen(store: store, onMoveToCloud: onMoveToCloud)));
   await tester.pumpAndSettle();
   return store;
 }
@@ -67,5 +69,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('1 entry uses elements you removed'), findsOneWidget);
   });
-}
 
+  testWidgets('local database without sign-in: no Move to cloud', (tester) async {
+    await _pump(tester);
+    expect(find.text('Move to cloud'), findsNothing);
+  });
+
+  testWidgets('Move to cloud asks first, then runs', (tester) async {
+    var moved = 0;
+    await _pump(tester, onMoveToCloud: () async => moved++);
+    await tester.tap(find.text('Move to cloud'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Everyone you add as a member'), findsOneWidget);
+    await tester.tap(find.text('Move'));
+    await tester.pumpAndSettle();
+    expect(moved, 1);
+  });
+}
