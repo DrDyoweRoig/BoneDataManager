@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../catalog/catalog.dart';
+import '../cloud/sync_engine.dart';
 import '../common/enums.dart';
 import '../data/local_store.dart';
 import '../entries/entry.dart';
@@ -14,8 +16,10 @@ import '../export/live_excel.dart';
 import '../schema/layer.dart';
 import '../state/cloud_providers.dart';
 import '../state/providers.dart';
+import 'conflict_dialog.dart';
 import 'entry_form_screen.dart';
 import 'observer_dialog.dart';
+import 'sync_status_chip.dart';
 import 'widgets/select_chips.dart';
 
 enum _Kind { bones, teeth }
@@ -40,6 +44,20 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   late final Stream<List<Entry>>? _entries = _store?.watchEntries();
   LiveExcel? _live;
   bool _warnedExcel = false;
+  SyncEngine? _engine;
+  StreamSubscription<SyncEvent>? _syncEvents;
+
+  /// Follows the engine of the open cloud database and shows its connection toasts.
+  void _watchEngine(SyncEngine? engine) {
+    if (identical(engine, _engine)) return;
+    _syncEvents?.cancel();
+    _engine = engine;
+    _syncEvents = engine?.events.listen((e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(syncEventMessage(e)), duration: const Duration(seconds: 8)));
+    });
+  }
 
   @override
   void initState() {
@@ -54,6 +72,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
 
   @override
   void dispose() {
+    _syncEvents?.cancel();
     _live?.dispose();
     super.dispose();
   }
@@ -144,7 +163,8 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     final store = ref.watch(openStoreProvider);
     if (store == null) return const SizedBox.shrink();
     // Keeps the sync engine of a cloud database alive while the workspace is open.
-    ref.watch(syncEngineProvider);
+    final engine = ref.watch(syncEngineProvider);
+    _watchEngine(engine);
     final canEdit = (ref.watch(currentRoleProvider).value ?? 'viewer') != 'viewer';
     // Structure changes (layers, names) also change the Excel file.
     ref.listen(openStoreProvider, (_, _) => _live?.schedule());
@@ -160,6 +180,14 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         actions: [
           if (!canEdit && ref.watch(currentRoleProvider).hasValue) ...[
             const Chip(avatar: Icon(Icons.visibility_outlined, size: 18), label: Text('Viewer · read only')),
+            const SizedBox(width: 8),
+          ],
+          if (engine != null) ...[
+            SyncStatusChip(
+              status: engine.status,
+              problem: engine.problem,
+              onConflicts: () => showConflictDialog(context, engine, layers),
+            ),
             const SizedBox(width: 8),
           ],
           ActionChip(
