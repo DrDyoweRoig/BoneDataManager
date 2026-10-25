@@ -33,6 +33,12 @@ class SyncStatus {
   String toString() => 'SyncStatus($connection, pending: $pending, conflicts: $conflicts)';
 }
 
+/// Mobile: a save was attempted without a connection.
+class NeedsConnection implements Exception {
+  @override
+  String toString() => "You're offline. Saving needs a connection.";
+}
+
 sealed class SyncEvent {}
 
 class WentOffline extends SyncEvent {}
@@ -47,12 +53,16 @@ class BackOnline extends SyncEvent {
 /// Keeps a cloud-linked [LocalStore] in step with the cloud. The UI writes through this engine;
 /// reads stay on the local store.
 class SyncEngine implements EntryWriter {
-  SyncEngine(this.store, this.api, {this.blockSize = 50, this.period = const Duration(seconds: 30)});
+  SyncEngine(this.store, this.api,
+      {this.blockSize = 50, this.period = const Duration(seconds: 30), this.allowOffline = true});
 
   final LocalStore store;
   final CloudApi api;
   final int blockSize;
   final Duration period;
+
+  /// false on phones: saving needs the server, and no offline number block is ever reserved.
+  final bool allowOffline;
 
   final _status = ValueNotifier(const SyncStatus());
   final _problem = ValueNotifier<String?>(null);
@@ -99,8 +109,31 @@ class SyncEngine implements EntryWriter {
     );
   }
 
+  /// Mobile: make sure the server is reachable before touching the local copy.
+  Future<void> _requireConnection() async {
+    try {
+      await api.fetchDefinition(_db);
+    } on CloudOffline {
+      _goOffline();
+      await _publish();
+      throw NeedsConnection();
+    }
+  }
+
   @override
   Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer) async {
+    if (!allowOffline) {
+      try {
+        final made = await api.createEntries(_db, drafts, observer, ids: [for (final _ in drafts) const Uuid().v4()]);
+        await store.insertSynced(made);
+        await _publish();
+        return made;
+      } on CloudOffline {
+        _goOffline();
+        await _publish();
+        throw NeedsConnection();
+      }
+    }
     final ids = [for (final _ in drafts) const Uuid().v4()];
     if (!_offline) {
       try {
@@ -120,17 +153,19 @@ class SyncEngine implements EntryWriter {
 
   @override
   Future<Entry> updateEntry(String id, EntryDraft data, String observer) async {
+    if (!allowOffline) await _requireConnection();
     final e = await store.updateEntry(id, data, observer);
     await _publish();
-    unawaited(syncNow());
+    allowOffline ? unawaited(syncNow()) : await syncNow();
     return e;
   }
 
   @override
   Future<void> deleteEntry(String id, String observer) async {
+    if (!allowOffline) await _requireConnection();
     await store.deleteEntry(id, observer);
     await _publish();
-    unawaited(syncNow());
+    allowOffline ? unawaited(syncNow()) : await syncNow();
   }
 
   /// One full round: definition, number block, push, pull. Calls made while running are merged.
@@ -163,7 +198,7 @@ class SyncEngine implements EntryWriter {
       }
 
       final b = store.block;
-      if (b == null || b.end - b.next + 1 < blockSize / 2) {
+      if (allowOffline && (b == null || b.end - b.next + 1 < blockSize / 2)) {
         try {
           final r = await api.reserveBlock(_db, store.deviceId!, blockSize);
           await store.setBlock(r.start, r.end);

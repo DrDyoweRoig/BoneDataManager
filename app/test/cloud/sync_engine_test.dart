@@ -266,4 +266,55 @@ void main() {
     await a.syncNow();
     expect(announced, 1);
   });
+
+  group('mobile (allowOffline: false)', () {
+    Future<(SyncEngine, LocalStore, FakeCloudApi)> phone() async {
+      final api = FakeCloudApi(server);
+      final store = await LocalStore.inMemory(def);
+      await store.linkToCloud('db1', 'phone');
+      final engine = SyncEngine(store, api, allowOffline: false);
+      cleanup.add(() async {
+        await engine.dispose();
+        await store.close();
+      });
+      await engine.syncNow();
+      return (engine, store, api);
+    }
+
+    test('never reserves a number block', () async {
+      final (_, store, _) = await phone();
+      expect(store.block, isNull);
+      expect(server.blocks['db1'] ?? [], isEmpty);
+    });
+
+    test('offline create is refused and leaves nothing behind', () async {
+      final (engine, store, api) = await phone();
+      api.online = false;
+      await expectLater(engine.createEntries([left], 'AP'), throwsA(isA<NeedsConnection>()));
+      expect(await store.allEntries(), isEmpty);
+      expect(server.entries('db1'), isEmpty);
+      expect(engine.status.value.connection, Connection.offline);
+    });
+
+    test('offline edit is refused and the entry is untouched', () async {
+      final (engine, store, api) = await phone();
+      final e = (await engine.createEntries([left], 'AP')).single;
+      api.online = false;
+      await expectLater(engine.updateEntry(e.id, right, 'AP'), throwsA(isA<NeedsConnection>()));
+      await expectLater(engine.deleteEntry(e.id, 'AP'), throwsA(isA<NeedsConnection>()));
+      expect((await store.allEntries()).single.data.side, Side.left);
+      expect(await store.pendingEntries(), isEmpty);
+    });
+
+    test('online edit is on the server when it returns', () async {
+      final (engine, _, _) = await phone();
+      final e = (await engine.createEntries([left], 'AP')).single;
+      await engine.updateEntry(e.id, right, 'AP');
+      expect(server.entries('db1').single.data.side, Side.right);
+    });
+
+    test('the message says saving needs a connection', () {
+      expect(NeedsConnection().toString(), "You're offline. Saving needs a connection.");
+    });
+  });
 }
