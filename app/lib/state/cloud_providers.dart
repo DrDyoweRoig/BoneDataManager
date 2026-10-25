@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../cloud/auth_service.dart';
 import '../cloud/cloud_api.dart';
 import '../cloud/sync_engine.dart';
+import '../common/platform.dart';
 import 'providers.dart';
 
 /// Null when the app was built without cloud configuration; overridden in `main` otherwise.
@@ -36,7 +37,7 @@ final syncEngineProvider = Provider<SyncEngine?>((ref) {
   final (store, cloudId) = ref.watch(openStoreProvider.select((s) => (s, s?.cloudId)));
   final api = ref.watch(cloudApiProvider);
   if (store == null || cloudId == null || api == null) return null;
-  final engine = SyncEngine(store, api)
+  final engine = SyncEngine(store, api, allowOffline: !isMobile)
     ..onDefinitionChanged = () => ref.read(openStoreProvider.notifier).definitionChanged();
   var disposed = false;
   Future<void> stop() async {

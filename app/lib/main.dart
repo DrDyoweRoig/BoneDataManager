@@ -7,6 +7,7 @@ import 'cloud/auth_service.dart';
 import 'cloud/cloud_config.dart';
 import 'cloud/move_to_cloud.dart';
 import 'cloud/supabase_cloud_api.dart';
+import 'common/platform.dart';
 import 'state/cloud_providers.dart';
 import 'state/providers.dart';
 import 'ui/backup_scheduler.dart';
@@ -45,50 +46,61 @@ class BoneDataManagerApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
-      builder: (context, child) => BackupScheduler(child: child!),
+      builder: isMobile ? null : (context, child) => BackupScheduler(child: child!),
       home: store == null
           ? const HomeScreen()
           : WorkspaceScreen(
               key: ObjectKey(store),
-              extraActions: [
-                if (isOwner && store.cloudId != null && api != null)
-                  Builder(
-                    builder: (context) => IconButton(
-                      tooltip: 'Members',
-                      icon: const Icon(Icons.group_outlined),
-                      onPressed: () => Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => MembersScreen(api: api, cloudId: store.cloudId!))),
-                    ),
-                  ),
-                if (isOwner)
-                Builder(
-                  builder: (context) => IconButton(
-                    tooltip: 'Structure',
-                    icon: const Icon(Icons.account_tree_outlined),
-                    onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => StructureScreen(
-                            store: store,
-                            api: api,
-                            onMoveToCloud: api == null || !signedIn || store.cloudId != null
-                                ? null
-                                : () async {
-                                    final settings = await ref.read(settingsProvider.future);
-                                    await moveToCloud(store, api, settings.deviceId);
-                                    await ref.read(registryProvider).rememberCopy(store.cloudId!, store.file!.path);
-                                    ref.read(openStoreProvider.notifier).definitionChanged();
-                                  },
-                            onSaved: () => ref.read(openStoreProvider.notifier).definitionChanged()))),
-                  ),
-                ),
-                Builder(
-                  builder: (context) => IconButton(
-                    tooltip: 'Settings',
-                    icon: const Icon(Icons.settings_outlined),
-                    onPressed: () =>
-                        Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
-                  ),
-                ),
-              ],
+              extraActions: isMobile
+                  ? const []
+                  : [
+                      if (isOwner && store.cloudId != null && api != null)
+                        Builder(
+                          builder: (context) => IconButton(
+                            tooltip: 'Members',
+                            icon: const Icon(Icons.group_outlined),
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => MembersScreen(api: api, cloudId: store.cloudId!),
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (isOwner)
+                        Builder(
+                          builder: (context) => IconButton(
+                            tooltip: 'Structure',
+                            icon: const Icon(Icons.account_tree_outlined),
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => StructureScreen(
+                                  store: store,
+                                  api: api,
+                                  onMoveToCloud: api == null || !signedIn || store.cloudId != null
+                                      ? null
+                                      : () async {
+                                          final settings = await ref.read(settingsProvider.future);
+                                          await moveToCloud(store, api, settings.deviceId);
+                                          await ref
+                                              .read(registryProvider)
+                                              .rememberCopy(store.cloudId!, store.file!.path);
+                                          ref.read(openStoreProvider.notifier).definitionChanged();
+                                        },
+                                  onSaved: () => ref.read(openStoreProvider.notifier).definitionChanged(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      Builder(
+                        builder: (context) => IconButton(
+                          tooltip: 'Settings',
+                          icon: const Icon(Icons.settings_outlined),
+                          onPressed: () =>
+                              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
+                        ),
+                      ),
+                    ],
             ),
     );
   }
