@@ -7,6 +7,8 @@ import 'package:uuid/uuid.dart';
 
 import '../common/enums.dart';
 import '../entries/entry.dart';
+import '../entries/entry_json.dart';
+import '../entries/entry_writer.dart';
 import '../ids/ref_id.dart';
 import '../schema/database_def.dart';
 import '../schema/layer.dart';
@@ -14,8 +16,16 @@ import 'local_db.dart';
 
 const _uuid = Uuid();
 
+/// Offline: this computer's reserved numbers can't cover the new entries.
+class NoNumbersLeft implements Exception {
+  @override
+  String toString() => 'No reserved numbers left on this computer. Connect to the internet to add more entries.';
+}
+
 /// One database = one SQLite file holding its definition, layers and entries.
-class LocalStore {
+/// A cloud-linked store also tracks pending (not yet uploaded) changes, its reserved number block
+/// and conflicts with the server.
+class LocalStore implements EntryWriter {
   LocalStore._(this._db, this._def, this._nextNumber, this.file, this._now);
 
   final LocalDb _db;
@@ -23,6 +33,15 @@ class LocalStore {
   int _nextNumber;
   final File? file;
   final DateTime Function() _now;
+  String? _cloudId;
+  String? _deviceId;
+  ({int next, int end})? _block;
+
+  String? get cloudId => _cloudId;
+  String? get deviceId => _deviceId;
+
+  /// Reserved numbers still free on this computer (`next` > `end` means used up).
+  ({int next, int end})? get block => _block;
 
   DatabaseDef get def => _def;
 
@@ -67,7 +86,10 @@ class LocalStore {
       selectedElements: Set<String>.from(jsonDecode(meta.selectedElements) as List),
       layers: [for (final r in layerRows) Layer.fromJson(jsonDecode(r.json) as Map<String, Object?>)],
     );
-    return LocalStore._(db, def, meta.nextNumber, file, now ?? DateTime.now);
+    return LocalStore._(db, def, meta.nextNumber, file, now ?? DateTime.now)
+      .._cloudId = meta.cloudId
+      .._deviceId = meta.deviceId
+      .._block = meta.blockNext == null ? null : (next: meta.blockNext!, end: meta.blockEnd!);
   }
 
   Future<void> _writeLayers(List<Layer> layers) async {
@@ -92,29 +114,14 @@ class LocalStore {
     _def = def;
   }
 
+  @override
   Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer) async {
     final now = _now();
     final created = <Entry>[];
     await _db.transaction(() async {
       var n = (await _db.select(_db.meta).getSingle()).nextNumber;
       for (final d in drafts) {
-        final row = EntryRow(
-          id: _uuid.v4(),
-          number: n,
-          refId: formatRefId(_def.prefix, _def.digits, n),
-          elementId: d.elementId,
-          dentition: d.dentition?.name,
-          toothType: d.toothType,
-          jaw: d.jaw?.name,
-          side: d.side?.name,
-          valuesJson: jsonEncode(d.values),
-          createdBy: observer,
-          createdAt: now,
-          modifiedBy: observer,
-          modifiedAt: now,
-          version: 1,
-          deleted: false,
-        );
+        final row = _rowFor(d, n, observer, now);
         await _db.into(_db.entries).insert(row);
         created.add(_toEntry(row));
         n++;
@@ -125,10 +132,12 @@ class LocalStore {
     return created;
   }
 
+  @override
   Future<Entry> updateEntry(String id, EntryDraft data, String observer) async {
     return _db.transaction(() async {
       final old = await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingle();
       final row = old.copyWith(
+        syncState: _cloudId == null ? old.syncState : 'pending',
         elementId: data.elementId,
         dentition: Value(data.dentition?.name),
         toothType: Value(data.toothType),
@@ -145,11 +154,148 @@ class LocalStore {
   }
 
   /// Soft delete, so the deletion can sync later and the number is never reused.
+  @override
   Future<void> deleteEntry(String id, String observer) async {
     final old = await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingle();
-    await _db.update(_db.entries).replace(
-        old.copyWith(deleted: true, modifiedBy: observer, modifiedAt: _now(), version: old.version + 1));
+    await _db.update(_db.entries).replace(old.copyWith(
+        deleted: true,
+        modifiedBy: observer,
+        modifiedAt: _now(),
+        version: old.version + 1,
+        syncState: _cloudId == null ? old.syncState : 'pending'));
   }
+
+  // ───────────── Cloud sync support ─────────────
+
+  Future<void> linkToCloud(String cloudId, String deviceId) async {
+    await _db.update(_db.meta).write(MetaCompanion(cloudId: Value(cloudId), deviceId: Value(deviceId)));
+    _cloudId = cloudId;
+    _deviceId = deviceId;
+  }
+
+  Future<void> setBlock(int start, int end) async {
+    await _db.update(_db.meta).write(MetaCompanion(blockNext: Value(start), blockEnd: Value(end)));
+    _block = (next: start, end: end);
+  }
+
+  /// Offline creation: numbers come from this computer's block. All or nothing.
+  Future<List<Entry>> createEntriesFromBlock(List<EntryDraft> drafts, String observer) async {
+    final b = _block;
+    if (b == null || b.next + drafts.length - 1 > b.end) throw NoNumbersLeft();
+    final now = _now();
+    final created = <Entry>[];
+    await _db.transaction(() async {
+      var n = b.next;
+      for (final d in drafts) {
+        final row = _rowFor(d, n, observer, now).copyWith(syncState: 'pending');
+        await _db.into(_db.entries).insert(row);
+        created.add(_toEntry(row));
+        n++;
+      }
+      await _db.update(_db.meta).write(MetaCompanion(blockNext: Value(n)));
+      _block = (next: n, end: b.end);
+    });
+    return created;
+  }
+
+  /// Rows that already exist on the server (created online or pulled).
+  Future<void> insertSynced(List<Entry> rows) async {
+    await _db.batch((b) {
+      for (final e in rows) {
+        b.insert(_db.entries, _rowFromEntry(e, 'synced'), mode: InsertMode.insertOrReplace);
+      }
+    });
+  }
+
+  /// Created or changed here and not uploaded yet (deleted ones included).
+  Future<List<Entry>> pendingEntries() async => (await (_db.select(_db.entries)
+            ..where((e) => e.syncState.equals('pending'))
+            ..orderBy([(e) => OrderingTerm(expression: e.number)]))
+          .get())
+      .map(_toEntry)
+      .toList();
+
+  /// Server version a pending edit is based on (0 for rows never uploaded).
+  Future<int> baseVersion(String id) async =>
+      (await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingle()).baseVersion;
+
+  Future<void> markSynced(String id, int version) async {
+    await (_db.update(_db.entries)..where((e) => e.id.equals(id))).write(
+        EntriesCompanion(syncState: const Value('synced'), version: Value(version), baseVersion: Value(version)));
+  }
+
+  /// Applies a server row. Refuses (returns false) when there is a pending local edit, unless [force].
+  Future<bool> applyRemote(Entry server, {bool force = false}) async {
+    final local = await (_db.select(_db.entries)..where((e) => e.id.equals(server.id))).getSingleOrNull();
+    if (!force && local != null && local.syncState == 'pending') return false;
+    await _db.into(_db.entries).insert(_rowFromEntry(server, 'synced'), mode: InsertMode.insertOrReplace);
+    return true;
+  }
+
+  Future<DateTime?> lastPull() async {
+    final v = (await _db.select(_db.meta).getSingle()).lastPull;
+    return v == null ? null : DateTime.parse(v);
+  }
+
+  Future<void> setLastPull(DateTime t) =>
+      _db.update(_db.meta).write(MetaCompanion(lastPull: Value(t.toUtc().toIso8601String())));
+
+  Future<void> addConflict(Entry server) => _db.into(_db.conflicts).insert(
+      ConflictRow(entryId: server.id, serverJson: jsonEncode(entryToJson(server))),
+      mode: InsertMode.insertOrReplace);
+
+  Future<List<({Entry mine, Entry server})>> conflicts() async {
+    final out = <({Entry mine, Entry server})>[];
+    for (final c in await _db.select(_db.conflicts).get()) {
+      final mine = await (_db.select(_db.entries)..where((e) => e.id.equals(c.entryId))).getSingleOrNull();
+      if (mine == null) continue;
+      out.add((mine: _toEntry(mine), server: entryFromJson(jsonDecode(c.serverJson) as Map<String, Object?>)));
+    }
+    return out;
+  }
+
+  Future<void> removeConflict(String entryId) =>
+      (_db.delete(_db.conflicts)..where((c) => c.entryId.equals(entryId))).go();
+
+  EntryRow _rowFor(EntryDraft d, int n, String observer, DateTime now) => EntryRow(
+        id: _uuid.v4(),
+        number: n,
+        refId: formatRefId(_def.prefix, _def.digits, n),
+        elementId: d.elementId,
+        dentition: d.dentition?.name,
+        toothType: d.toothType,
+        jaw: d.jaw?.name,
+        side: d.side?.name,
+        valuesJson: jsonEncode(d.values),
+        createdBy: observer,
+        createdAt: now,
+        modifiedBy: observer,
+        modifiedAt: now,
+        version: 1,
+        deleted: false,
+        syncState: 'synced',
+        baseVersion: 0,
+      );
+
+  EntryRow _rowFromEntry(Entry e, String state) => EntryRow(
+        id: e.id,
+        number: e.number,
+        refId: e.refId,
+        elementId: e.data.elementId,
+        dentition: e.data.dentition?.name,
+        toothType: e.data.toothType,
+        jaw: e.data.jaw?.name,
+        side: e.data.side?.name,
+        valuesJson: jsonEncode(e.data.values),
+        createdBy: e.createdBy,
+        createdAt: e.createdAt,
+        modifiedBy: e.modifiedBy,
+        modifiedAt: e.modifiedAt,
+        version: e.version,
+        deleted: e.deleted,
+        syncState: state,
+        baseVersion: e.version,
+      );
 
   SimpleSelectStatement<$EntriesTable, EntryRow> _live() => _db.select(_db.entries)
     ..where((e) => e.deleted.equals(false))
@@ -192,6 +338,7 @@ class LocalStore {
 
   Entry _toEntry(EntryRow r) => Entry(
         id: r.id,
+        number: r.number,
         refId: r.refId,
         data: EntryDraft(
           elementId: r.elementId,

@@ -12,6 +12,13 @@ class Meta extends Table {
   IntColumn get nextNumber => integer()();
   TextColumn get selectedElements => text()(); // JSON list
 
+  // v2: cloud link and this computer's reserved numbers for offline work.
+  TextColumn get cloudId => text().nullable()();
+  TextColumn get deviceId => text().nullable()();
+  IntColumn get blockNext => integer().nullable()();
+  IntColumn get blockEnd => integer().nullable()();
+  TextColumn get lastPull => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -44,14 +51,42 @@ class Entries extends Table {
   IntColumn get version => integer()();
   BoolColumn get deleted => boolean()();
 
+  // v2: 'synced' or 'pending'; baseVersion = server version a pending edit started from.
+  TextColumn get syncState => text().withDefault(const Constant('synced'))();
+  IntColumn get baseVersion => integer().withDefault(const Constant(0))();
+
   @override
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [Meta, LayerDefs, Entries])
+/// v2: a server version that clashed with a pending local edit.
+@DataClassName('ConflictRow')
+class Conflicts extends Table {
+  TextColumn get entryId => text()();
+  TextColumn get serverJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {entryId};
+}
+
+@DriftDatabase(tables: [Meta, LayerDefs, Entries, Conflicts])
 class LocalDb extends _$LocalDb {
   LocalDb(super.e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            for (final c in [meta.cloudId, meta.deviceId, meta.blockNext, meta.blockEnd, meta.lastPull]) {
+              await m.addColumn(meta, c);
+            }
+            await m.addColumn(entries, entries.syncState);
+            await m.addColumn(entries, entries.baseVersion);
+            await m.createTable(conflicts);
+          }
+        },
+      );
 }

@@ -66,6 +66,61 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _cloudIdMeta = const VerificationMeta(
+    'cloudId',
+  );
+  @override
+  late final GeneratedColumn<String> cloudId = GeneratedColumn<String>(
+    'cloud_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _deviceIdMeta = const VerificationMeta(
+    'deviceId',
+  );
+  @override
+  late final GeneratedColumn<String> deviceId = GeneratedColumn<String>(
+    'device_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _blockNextMeta = const VerificationMeta(
+    'blockNext',
+  );
+  @override
+  late final GeneratedColumn<int> blockNext = GeneratedColumn<int>(
+    'block_next',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _blockEndMeta = const VerificationMeta(
+    'blockEnd',
+  );
+  @override
+  late final GeneratedColumn<int> blockEnd = GeneratedColumn<int>(
+    'block_end',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastPullMeta = const VerificationMeta(
+    'lastPull',
+  );
+  @override
+  late final GeneratedColumn<String> lastPull = GeneratedColumn<String>(
+    'last_pull',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -74,6 +129,11 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
     digits,
     nextNumber,
     selectedElements,
+    cloudId,
+    deviceId,
+    blockNext,
+    blockEnd,
+    lastPull,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -135,6 +195,36 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
     } else if (isInserting) {
       context.missing(_selectedElementsMeta);
     }
+    if (data.containsKey('cloud_id')) {
+      context.handle(
+        _cloudIdMeta,
+        cloudId.isAcceptableOrUnknown(data['cloud_id']!, _cloudIdMeta),
+      );
+    }
+    if (data.containsKey('device_id')) {
+      context.handle(
+        _deviceIdMeta,
+        deviceId.isAcceptableOrUnknown(data['device_id']!, _deviceIdMeta),
+      );
+    }
+    if (data.containsKey('block_next')) {
+      context.handle(
+        _blockNextMeta,
+        blockNext.isAcceptableOrUnknown(data['block_next']!, _blockNextMeta),
+      );
+    }
+    if (data.containsKey('block_end')) {
+      context.handle(
+        _blockEndMeta,
+        blockEnd.isAcceptableOrUnknown(data['block_end']!, _blockEndMeta),
+      );
+    }
+    if (data.containsKey('last_pull')) {
+      context.handle(
+        _lastPullMeta,
+        lastPull.isAcceptableOrUnknown(data['last_pull']!, _lastPullMeta),
+      );
+    }
     return context;
   }
 
@@ -168,6 +258,26 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
         DriftSqlType.string,
         data['${effectivePrefix}selected_elements'],
       )!,
+      cloudId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cloud_id'],
+      ),
+      deviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}device_id'],
+      ),
+      blockNext: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}block_next'],
+      ),
+      blockEnd: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}block_end'],
+      ),
+      lastPull: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_pull'],
+      ),
     );
   }
 
@@ -184,6 +294,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
   final int digits;
   final int nextNumber;
   final String selectedElements;
+  final String? cloudId;
+  final String? deviceId;
+  final int? blockNext;
+  final int? blockEnd;
+  final String? lastPull;
   const MetaRow({
     required this.id,
     required this.name,
@@ -191,6 +306,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     required this.digits,
     required this.nextNumber,
     required this.selectedElements,
+    this.cloudId,
+    this.deviceId,
+    this.blockNext,
+    this.blockEnd,
+    this.lastPull,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -201,6 +321,21 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     map['digits'] = Variable<int>(digits);
     map['next_number'] = Variable<int>(nextNumber);
     map['selected_elements'] = Variable<String>(selectedElements);
+    if (!nullToAbsent || cloudId != null) {
+      map['cloud_id'] = Variable<String>(cloudId);
+    }
+    if (!nullToAbsent || deviceId != null) {
+      map['device_id'] = Variable<String>(deviceId);
+    }
+    if (!nullToAbsent || blockNext != null) {
+      map['block_next'] = Variable<int>(blockNext);
+    }
+    if (!nullToAbsent || blockEnd != null) {
+      map['block_end'] = Variable<int>(blockEnd);
+    }
+    if (!nullToAbsent || lastPull != null) {
+      map['last_pull'] = Variable<String>(lastPull);
+    }
     return map;
   }
 
@@ -212,6 +347,21 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       digits: Value(digits),
       nextNumber: Value(nextNumber),
       selectedElements: Value(selectedElements),
+      cloudId: cloudId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cloudId),
+      deviceId: deviceId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deviceId),
+      blockNext: blockNext == null && nullToAbsent
+          ? const Value.absent()
+          : Value(blockNext),
+      blockEnd: blockEnd == null && nullToAbsent
+          ? const Value.absent()
+          : Value(blockEnd),
+      lastPull: lastPull == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastPull),
     );
   }
 
@@ -227,6 +377,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       digits: serializer.fromJson<int>(json['digits']),
       nextNumber: serializer.fromJson<int>(json['nextNumber']),
       selectedElements: serializer.fromJson<String>(json['selectedElements']),
+      cloudId: serializer.fromJson<String?>(json['cloudId']),
+      deviceId: serializer.fromJson<String?>(json['deviceId']),
+      blockNext: serializer.fromJson<int?>(json['blockNext']),
+      blockEnd: serializer.fromJson<int?>(json['blockEnd']),
+      lastPull: serializer.fromJson<String?>(json['lastPull']),
     );
   }
   @override
@@ -239,6 +394,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       'digits': serializer.toJson<int>(digits),
       'nextNumber': serializer.toJson<int>(nextNumber),
       'selectedElements': serializer.toJson<String>(selectedElements),
+      'cloudId': serializer.toJson<String?>(cloudId),
+      'deviceId': serializer.toJson<String?>(deviceId),
+      'blockNext': serializer.toJson<int?>(blockNext),
+      'blockEnd': serializer.toJson<int?>(blockEnd),
+      'lastPull': serializer.toJson<String?>(lastPull),
     };
   }
 
@@ -249,6 +409,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     int? digits,
     int? nextNumber,
     String? selectedElements,
+    Value<String?> cloudId = const Value.absent(),
+    Value<String?> deviceId = const Value.absent(),
+    Value<int?> blockNext = const Value.absent(),
+    Value<int?> blockEnd = const Value.absent(),
+    Value<String?> lastPull = const Value.absent(),
   }) => MetaRow(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -256,6 +421,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     digits: digits ?? this.digits,
     nextNumber: nextNumber ?? this.nextNumber,
     selectedElements: selectedElements ?? this.selectedElements,
+    cloudId: cloudId.present ? cloudId.value : this.cloudId,
+    deviceId: deviceId.present ? deviceId.value : this.deviceId,
+    blockNext: blockNext.present ? blockNext.value : this.blockNext,
+    blockEnd: blockEnd.present ? blockEnd.value : this.blockEnd,
+    lastPull: lastPull.present ? lastPull.value : this.lastPull,
   );
   MetaRow copyWithCompanion(MetaCompanion data) {
     return MetaRow(
@@ -269,6 +439,11 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       selectedElements: data.selectedElements.present
           ? data.selectedElements.value
           : this.selectedElements,
+      cloudId: data.cloudId.present ? data.cloudId.value : this.cloudId,
+      deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
+      blockNext: data.blockNext.present ? data.blockNext.value : this.blockNext,
+      blockEnd: data.blockEnd.present ? data.blockEnd.value : this.blockEnd,
+      lastPull: data.lastPull.present ? data.lastPull.value : this.lastPull,
     );
   }
 
@@ -280,14 +455,30 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
           ..write('prefix: $prefix, ')
           ..write('digits: $digits, ')
           ..write('nextNumber: $nextNumber, ')
-          ..write('selectedElements: $selectedElements')
+          ..write('selectedElements: $selectedElements, ')
+          ..write('cloudId: $cloudId, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('blockNext: $blockNext, ')
+          ..write('blockEnd: $blockEnd, ')
+          ..write('lastPull: $lastPull')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, prefix, digits, nextNumber, selectedElements);
+  int get hashCode => Object.hash(
+    id,
+    name,
+    prefix,
+    digits,
+    nextNumber,
+    selectedElements,
+    cloudId,
+    deviceId,
+    blockNext,
+    blockEnd,
+    lastPull,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -297,7 +488,12 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
           other.prefix == this.prefix &&
           other.digits == this.digits &&
           other.nextNumber == this.nextNumber &&
-          other.selectedElements == this.selectedElements);
+          other.selectedElements == this.selectedElements &&
+          other.cloudId == this.cloudId &&
+          other.deviceId == this.deviceId &&
+          other.blockNext == this.blockNext &&
+          other.blockEnd == this.blockEnd &&
+          other.lastPull == this.lastPull);
 }
 
 class MetaCompanion extends UpdateCompanion<MetaRow> {
@@ -307,6 +503,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
   final Value<int> digits;
   final Value<int> nextNumber;
   final Value<String> selectedElements;
+  final Value<String?> cloudId;
+  final Value<String?> deviceId;
+  final Value<int?> blockNext;
+  final Value<int?> blockEnd;
+  final Value<String?> lastPull;
   final Value<int> rowid;
   const MetaCompanion({
     this.id = const Value.absent(),
@@ -315,6 +516,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     this.digits = const Value.absent(),
     this.nextNumber = const Value.absent(),
     this.selectedElements = const Value.absent(),
+    this.cloudId = const Value.absent(),
+    this.deviceId = const Value.absent(),
+    this.blockNext = const Value.absent(),
+    this.blockEnd = const Value.absent(),
+    this.lastPull = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MetaCompanion.insert({
@@ -324,6 +530,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     required int digits,
     required int nextNumber,
     required String selectedElements,
+    this.cloudId = const Value.absent(),
+    this.deviceId = const Value.absent(),
+    this.blockNext = const Value.absent(),
+    this.blockEnd = const Value.absent(),
+    this.lastPull = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        name = Value(name),
@@ -338,6 +549,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     Expression<int>? digits,
     Expression<int>? nextNumber,
     Expression<String>? selectedElements,
+    Expression<String>? cloudId,
+    Expression<String>? deviceId,
+    Expression<int>? blockNext,
+    Expression<int>? blockEnd,
+    Expression<String>? lastPull,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -347,6 +563,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
       if (digits != null) 'digits': digits,
       if (nextNumber != null) 'next_number': nextNumber,
       if (selectedElements != null) 'selected_elements': selectedElements,
+      if (cloudId != null) 'cloud_id': cloudId,
+      if (deviceId != null) 'device_id': deviceId,
+      if (blockNext != null) 'block_next': blockNext,
+      if (blockEnd != null) 'block_end': blockEnd,
+      if (lastPull != null) 'last_pull': lastPull,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -358,6 +579,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     Value<int>? digits,
     Value<int>? nextNumber,
     Value<String>? selectedElements,
+    Value<String?>? cloudId,
+    Value<String?>? deviceId,
+    Value<int?>? blockNext,
+    Value<int?>? blockEnd,
+    Value<String?>? lastPull,
     Value<int>? rowid,
   }) {
     return MetaCompanion(
@@ -367,6 +593,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
       digits: digits ?? this.digits,
       nextNumber: nextNumber ?? this.nextNumber,
       selectedElements: selectedElements ?? this.selectedElements,
+      cloudId: cloudId ?? this.cloudId,
+      deviceId: deviceId ?? this.deviceId,
+      blockNext: blockNext ?? this.blockNext,
+      blockEnd: blockEnd ?? this.blockEnd,
+      lastPull: lastPull ?? this.lastPull,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -392,6 +623,21 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     if (selectedElements.present) {
       map['selected_elements'] = Variable<String>(selectedElements.value);
     }
+    if (cloudId.present) {
+      map['cloud_id'] = Variable<String>(cloudId.value);
+    }
+    if (deviceId.present) {
+      map['device_id'] = Variable<String>(deviceId.value);
+    }
+    if (blockNext.present) {
+      map['block_next'] = Variable<int>(blockNext.value);
+    }
+    if (blockEnd.present) {
+      map['block_end'] = Variable<int>(blockEnd.value);
+    }
+    if (lastPull.present) {
+      map['last_pull'] = Variable<String>(lastPull.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -407,6 +653,11 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
           ..write('digits: $digits, ')
           ..write('nextNumber: $nextNumber, ')
           ..write('selectedElements: $selectedElements, ')
+          ..write('cloudId: $cloudId, ')
+          ..write('deviceId: $deviceId, ')
+          ..write('blockNext: $blockNext, ')
+          ..write('blockEnd: $blockEnd, ')
+          ..write('lastPull: $lastPull, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -835,6 +1086,30 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
       'CHECK ("deleted" IN (0, 1))',
     ),
   );
+  static const VerificationMeta _syncStateMeta = const VerificationMeta(
+    'syncState',
+  );
+  @override
+  late final GeneratedColumn<String> syncState = GeneratedColumn<String>(
+    'sync_state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('synced'),
+  );
+  static const VerificationMeta _baseVersionMeta = const VerificationMeta(
+    'baseVersion',
+  );
+  @override
+  late final GeneratedColumn<int> baseVersion = GeneratedColumn<int>(
+    'base_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -852,6 +1127,8 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
     modifiedAt,
     version,
     deleted,
+    syncState,
+    baseVersion,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -974,6 +1251,21 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
     } else if (isInserting) {
       context.missing(_deletedMeta);
     }
+    if (data.containsKey('sync_state')) {
+      context.handle(
+        _syncStateMeta,
+        syncState.isAcceptableOrUnknown(data['sync_state']!, _syncStateMeta),
+      );
+    }
+    if (data.containsKey('base_version')) {
+      context.handle(
+        _baseVersionMeta,
+        baseVersion.isAcceptableOrUnknown(
+          data['base_version']!,
+          _baseVersionMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1043,6 +1335,14 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
         DriftSqlType.bool,
         data['${effectivePrefix}deleted'],
       )!,
+      syncState: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sync_state'],
+      )!,
+      baseVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_version'],
+      )!,
     );
   }
 
@@ -1068,6 +1368,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
   final DateTime modifiedAt;
   final int version;
   final bool deleted;
+  final String syncState;
+  final int baseVersion;
   const EntryRow({
     required this.id,
     required this.number,
@@ -1084,6 +1386,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     required this.modifiedAt,
     required this.version,
     required this.deleted,
+    required this.syncState,
+    required this.baseVersion,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1111,6 +1415,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     map['modified_at'] = Variable<DateTime>(modifiedAt);
     map['version'] = Variable<int>(version);
     map['deleted'] = Variable<bool>(deleted);
+    map['sync_state'] = Variable<String>(syncState);
+    map['base_version'] = Variable<int>(baseVersion);
     return map;
   }
 
@@ -1135,6 +1441,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       modifiedAt: Value(modifiedAt),
       version: Value(version),
       deleted: Value(deleted),
+      syncState: Value(syncState),
+      baseVersion: Value(baseVersion),
     );
   }
 
@@ -1159,6 +1467,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       modifiedAt: serializer.fromJson<DateTime>(json['modifiedAt']),
       version: serializer.fromJson<int>(json['version']),
       deleted: serializer.fromJson<bool>(json['deleted']),
+      syncState: serializer.fromJson<String>(json['syncState']),
+      baseVersion: serializer.fromJson<int>(json['baseVersion']),
     );
   }
   @override
@@ -1180,6 +1490,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       'modifiedAt': serializer.toJson<DateTime>(modifiedAt),
       'version': serializer.toJson<int>(version),
       'deleted': serializer.toJson<bool>(deleted),
+      'syncState': serializer.toJson<String>(syncState),
+      'baseVersion': serializer.toJson<int>(baseVersion),
     };
   }
 
@@ -1199,6 +1511,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     DateTime? modifiedAt,
     int? version,
     bool? deleted,
+    String? syncState,
+    int? baseVersion,
   }) => EntryRow(
     id: id ?? this.id,
     number: number ?? this.number,
@@ -1215,6 +1529,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     modifiedAt: modifiedAt ?? this.modifiedAt,
     version: version ?? this.version,
     deleted: deleted ?? this.deleted,
+    syncState: syncState ?? this.syncState,
+    baseVersion: baseVersion ?? this.baseVersion,
   );
   EntryRow copyWithCompanion(EntriesCompanion data) {
     return EntryRow(
@@ -1239,6 +1555,10 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
           : this.modifiedAt,
       version: data.version.present ? data.version.value : this.version,
       deleted: data.deleted.present ? data.deleted.value : this.deleted,
+      syncState: data.syncState.present ? data.syncState.value : this.syncState,
+      baseVersion: data.baseVersion.present
+          ? data.baseVersion.value
+          : this.baseVersion,
     );
   }
 
@@ -1259,7 +1579,9 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
           ..write('modifiedBy: $modifiedBy, ')
           ..write('modifiedAt: $modifiedAt, ')
           ..write('version: $version, ')
-          ..write('deleted: $deleted')
+          ..write('deleted: $deleted, ')
+          ..write('syncState: $syncState, ')
+          ..write('baseVersion: $baseVersion')
           ..write(')'))
         .toString();
   }
@@ -1281,6 +1603,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     modifiedAt,
     version,
     deleted,
+    syncState,
+    baseVersion,
   );
   @override
   bool operator ==(Object other) =>
@@ -1300,7 +1624,9 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
           other.modifiedBy == this.modifiedBy &&
           other.modifiedAt == this.modifiedAt &&
           other.version == this.version &&
-          other.deleted == this.deleted);
+          other.deleted == this.deleted &&
+          other.syncState == this.syncState &&
+          other.baseVersion == this.baseVersion);
 }
 
 class EntriesCompanion extends UpdateCompanion<EntryRow> {
@@ -1319,6 +1645,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
   final Value<DateTime> modifiedAt;
   final Value<int> version;
   final Value<bool> deleted;
+  final Value<String> syncState;
+  final Value<int> baseVersion;
   final Value<int> rowid;
   const EntriesCompanion({
     this.id = const Value.absent(),
@@ -1336,6 +1664,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     this.modifiedAt = const Value.absent(),
     this.version = const Value.absent(),
     this.deleted = const Value.absent(),
+    this.syncState = const Value.absent(),
+    this.baseVersion = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   EntriesCompanion.insert({
@@ -1354,6 +1684,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     required DateTime modifiedAt,
     required int version,
     required bool deleted,
+    this.syncState = const Value.absent(),
+    this.baseVersion = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        number = Value(number),
@@ -1382,6 +1714,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     Expression<DateTime>? modifiedAt,
     Expression<int>? version,
     Expression<bool>? deleted,
+    Expression<String>? syncState,
+    Expression<int>? baseVersion,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1400,6 +1734,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
       if (modifiedAt != null) 'modified_at': modifiedAt,
       if (version != null) 'version': version,
       if (deleted != null) 'deleted': deleted,
+      if (syncState != null) 'sync_state': syncState,
+      if (baseVersion != null) 'base_version': baseVersion,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1420,6 +1756,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     Value<DateTime>? modifiedAt,
     Value<int>? version,
     Value<bool>? deleted,
+    Value<String>? syncState,
+    Value<int>? baseVersion,
     Value<int>? rowid,
   }) {
     return EntriesCompanion(
@@ -1438,6 +1776,8 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
       modifiedAt: modifiedAt ?? this.modifiedAt,
       version: version ?? this.version,
       deleted: deleted ?? this.deleted,
+      syncState: syncState ?? this.syncState,
+      baseVersion: baseVersion ?? this.baseVersion,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1490,6 +1830,12 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     if (deleted.present) {
       map['deleted'] = Variable<bool>(deleted.value);
     }
+    if (syncState.present) {
+      map['sync_state'] = Variable<String>(syncState.value);
+    }
+    if (baseVersion.present) {
+      map['base_version'] = Variable<int>(baseVersion.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1514,6 +1860,227 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
           ..write('modifiedAt: $modifiedAt, ')
           ..write('version: $version, ')
           ..write('deleted: $deleted, ')
+          ..write('syncState: $syncState, ')
+          ..write('baseVersion: $baseVersion, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ConflictsTable extends Conflicts
+    with TableInfo<$ConflictsTable, ConflictRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ConflictsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _entryIdMeta = const VerificationMeta(
+    'entryId',
+  );
+  @override
+  late final GeneratedColumn<String> entryId = GeneratedColumn<String>(
+    'entry_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _serverJsonMeta = const VerificationMeta(
+    'serverJson',
+  );
+  @override
+  late final GeneratedColumn<String> serverJson = GeneratedColumn<String>(
+    'server_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [entryId, serverJson];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'conflicts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ConflictRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('entry_id')) {
+      context.handle(
+        _entryIdMeta,
+        entryId.isAcceptableOrUnknown(data['entry_id']!, _entryIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entryIdMeta);
+    }
+    if (data.containsKey('server_json')) {
+      context.handle(
+        _serverJsonMeta,
+        serverJson.isAcceptableOrUnknown(data['server_json']!, _serverJsonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_serverJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entryId};
+  @override
+  ConflictRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ConflictRow(
+      entryId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entry_id'],
+      )!,
+      serverJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}server_json'],
+      )!,
+    );
+  }
+
+  @override
+  $ConflictsTable createAlias(String alias) {
+    return $ConflictsTable(attachedDatabase, alias);
+  }
+}
+
+class ConflictRow extends DataClass implements Insertable<ConflictRow> {
+  final String entryId;
+  final String serverJson;
+  const ConflictRow({required this.entryId, required this.serverJson});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['entry_id'] = Variable<String>(entryId);
+    map['server_json'] = Variable<String>(serverJson);
+    return map;
+  }
+
+  ConflictsCompanion toCompanion(bool nullToAbsent) {
+    return ConflictsCompanion(
+      entryId: Value(entryId),
+      serverJson: Value(serverJson),
+    );
+  }
+
+  factory ConflictRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ConflictRow(
+      entryId: serializer.fromJson<String>(json['entryId']),
+      serverJson: serializer.fromJson<String>(json['serverJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'entryId': serializer.toJson<String>(entryId),
+      'serverJson': serializer.toJson<String>(serverJson),
+    };
+  }
+
+  ConflictRow copyWith({String? entryId, String? serverJson}) => ConflictRow(
+    entryId: entryId ?? this.entryId,
+    serverJson: serverJson ?? this.serverJson,
+  );
+  ConflictRow copyWithCompanion(ConflictsCompanion data) {
+    return ConflictRow(
+      entryId: data.entryId.present ? data.entryId.value : this.entryId,
+      serverJson: data.serverJson.present
+          ? data.serverJson.value
+          : this.serverJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ConflictRow(')
+          ..write('entryId: $entryId, ')
+          ..write('serverJson: $serverJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(entryId, serverJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ConflictRow &&
+          other.entryId == this.entryId &&
+          other.serverJson == this.serverJson);
+}
+
+class ConflictsCompanion extends UpdateCompanion<ConflictRow> {
+  final Value<String> entryId;
+  final Value<String> serverJson;
+  final Value<int> rowid;
+  const ConflictsCompanion({
+    this.entryId = const Value.absent(),
+    this.serverJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ConflictsCompanion.insert({
+    required String entryId,
+    required String serverJson,
+    this.rowid = const Value.absent(),
+  }) : entryId = Value(entryId),
+       serverJson = Value(serverJson);
+  static Insertable<ConflictRow> custom({
+    Expression<String>? entryId,
+    Expression<String>? serverJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (entryId != null) 'entry_id': entryId,
+      if (serverJson != null) 'server_json': serverJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ConflictsCompanion copyWith({
+    Value<String>? entryId,
+    Value<String>? serverJson,
+    Value<int>? rowid,
+  }) {
+    return ConflictsCompanion(
+      entryId: entryId ?? this.entryId,
+      serverJson: serverJson ?? this.serverJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (entryId.present) {
+      map['entry_id'] = Variable<String>(entryId.value);
+    }
+    if (serverJson.present) {
+      map['server_json'] = Variable<String>(serverJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ConflictsCompanion(')
+          ..write('entryId: $entryId, ')
+          ..write('serverJson: $serverJson, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1526,6 +2093,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
   late final $MetaTable meta = $MetaTable(this);
   late final $LayerDefsTable layerDefs = $LayerDefsTable(this);
   late final $EntriesTable entries = $EntriesTable(this);
+  late final $ConflictsTable conflicts = $ConflictsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1534,6 +2102,7 @@ abstract class _$LocalDb extends GeneratedDatabase {
     meta,
     layerDefs,
     entries,
+    conflicts,
   ];
 }
 
@@ -1544,6 +2113,11 @@ typedef $$MetaTableCreateCompanionBuilder = MetaCompanion Function({
   required int digits,
   required int nextNumber,
   required String selectedElements,
+  Value<String?> cloudId,
+  Value<String?> deviceId,
+  Value<int?> blockNext,
+  Value<int?> blockEnd,
+  Value<String?> lastPull,
   Value<int> rowid,
 });
 typedef $$MetaTableUpdateCompanionBuilder = MetaCompanion Function({
@@ -1553,6 +2127,11 @@ typedef $$MetaTableUpdateCompanionBuilder = MetaCompanion Function({
   Value<int> digits,
   Value<int> nextNumber,
   Value<String> selectedElements,
+  Value<String?> cloudId,
+  Value<String?> deviceId,
+  Value<int?> blockNext,
+  Value<int?> blockEnd,
+  Value<String?> lastPull,
   Value<int> rowid,
 });
 
@@ -1591,6 +2170,31 @@ class $$MetaTableFilterComposer extends Composer<_$LocalDb, $MetaTable> {
 
   ColumnFilters<String> get selectedElements => $composableBuilder(
     column: $table.selectedElements,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cloudId => $composableBuilder(
+    column: $table.cloudId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get deviceId => $composableBuilder(
+    column: $table.deviceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get blockNext => $composableBuilder(
+    column: $table.blockNext,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get blockEnd => $composableBuilder(
+    column: $table.blockEnd,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastPull => $composableBuilder(
+    column: $table.lastPull,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1632,6 +2236,31 @@ class $$MetaTableOrderingComposer extends Composer<_$LocalDb, $MetaTable> {
     column: $table.selectedElements,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get cloudId => $composableBuilder(
+    column: $table.cloudId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get deviceId => $composableBuilder(
+    column: $table.deviceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get blockNext => $composableBuilder(
+    column: $table.blockNext,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get blockEnd => $composableBuilder(
+    column: $table.blockEnd,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastPull => $composableBuilder(
+    column: $table.lastPull,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MetaTableAnnotationComposer extends Composer<_$LocalDb, $MetaTable> {
@@ -1663,6 +2292,21 @@ class $$MetaTableAnnotationComposer extends Composer<_$LocalDb, $MetaTable> {
     column: $table.selectedElements,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get cloudId =>
+      $composableBuilder(column: $table.cloudId, builder: (column) => column);
+
+  GeneratedColumn<String> get deviceId =>
+      $composableBuilder(column: $table.deviceId, builder: (column) => column);
+
+  GeneratedColumn<int> get blockNext =>
+      $composableBuilder(column: $table.blockNext, builder: (column) => column);
+
+  GeneratedColumn<int> get blockEnd =>
+      $composableBuilder(column: $table.blockEnd, builder: (column) => column);
+
+  GeneratedColumn<String> get lastPull =>
+      $composableBuilder(column: $table.lastPull, builder: (column) => column);
 }
 
 class $$MetaTableTableManager
@@ -1699,6 +2343,11 @@ class $$MetaTableTableManager
                 Value<int> digits = const Value.absent(),
                 Value<int> nextNumber = const Value.absent(),
                 Value<String> selectedElements = const Value.absent(),
+                Value<String?> cloudId = const Value.absent(),
+                Value<String?> deviceId = const Value.absent(),
+                Value<int?> blockNext = const Value.absent(),
+                Value<int?> blockEnd = const Value.absent(),
+                Value<String?> lastPull = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MetaCompanion(
                 id: id,
@@ -1707,6 +2356,11 @@ class $$MetaTableTableManager
                 digits: digits,
                 nextNumber: nextNumber,
                 selectedElements: selectedElements,
+                cloudId: cloudId,
+                deviceId: deviceId,
+                blockNext: blockNext,
+                blockEnd: blockEnd,
+                lastPull: lastPull,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -1717,6 +2371,11 @@ class $$MetaTableTableManager
                 required int digits,
                 required int nextNumber,
                 required String selectedElements,
+                Value<String?> cloudId = const Value.absent(),
+                Value<String?> deviceId = const Value.absent(),
+                Value<int?> blockNext = const Value.absent(),
+                Value<int?> blockEnd = const Value.absent(),
+                Value<String?> lastPull = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MetaCompanion.insert(
                 id: id,
@@ -1725,6 +2384,11 @@ class $$MetaTableTableManager
                 digits: digits,
                 nextNumber: nextNumber,
                 selectedElements: selectedElements,
+                cloudId: cloudId,
+                deviceId: deviceId,
+                blockNext: blockNext,
+                blockEnd: blockEnd,
+                lastPull: lastPull,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -1933,6 +2597,8 @@ typedef $$EntriesTableCreateCompanionBuilder = EntriesCompanion Function({
   required DateTime modifiedAt,
   required int version,
   required bool deleted,
+  Value<String> syncState,
+  Value<int> baseVersion,
   Value<int> rowid,
 });
 typedef $$EntriesTableUpdateCompanionBuilder = EntriesCompanion Function({
@@ -1951,6 +2617,8 @@ typedef $$EntriesTableUpdateCompanionBuilder = EntriesCompanion Function({
   Value<DateTime> modifiedAt,
   Value<int> version,
   Value<bool> deleted,
+  Value<String> syncState,
+  Value<int> baseVersion,
   Value<int> rowid,
 });
 
@@ -2034,6 +2702,16 @@ class $$EntriesTableFilterComposer extends Composer<_$LocalDb, $EntriesTable> {
 
   ColumnFilters<bool> get deleted => $composableBuilder(
     column: $table.deleted,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get syncState => $composableBuilder(
+    column: $table.syncState,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseVersion => $composableBuilder(
+    column: $table.baseVersion,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -2121,6 +2799,16 @@ class $$EntriesTableOrderingComposer
     column: $table.deleted,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get syncState => $composableBuilder(
+    column: $table.syncState,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get baseVersion => $composableBuilder(
+    column: $table.baseVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$EntriesTableAnnotationComposer
@@ -2182,6 +2870,14 @@ class $$EntriesTableAnnotationComposer
 
   GeneratedColumn<bool> get deleted =>
       $composableBuilder(column: $table.deleted, builder: (column) => column);
+
+  GeneratedColumn<String> get syncState =>
+      $composableBuilder(column: $table.syncState, builder: (column) => column);
+
+  GeneratedColumn<int> get baseVersion => $composableBuilder(
+    column: $table.baseVersion,
+    builder: (column) => column,
+  );
 }
 
 class $$EntriesTableTableManager
@@ -2227,6 +2923,8 @@ class $$EntriesTableTableManager
                 Value<DateTime> modifiedAt = const Value.absent(),
                 Value<int> version = const Value.absent(),
                 Value<bool> deleted = const Value.absent(),
+                Value<String> syncState = const Value.absent(),
+                Value<int> baseVersion = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => EntriesCompanion(
                 id: id,
@@ -2244,6 +2942,8 @@ class $$EntriesTableTableManager
                 modifiedAt: modifiedAt,
                 version: version,
                 deleted: deleted,
+                syncState: syncState,
+                baseVersion: baseVersion,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -2263,6 +2963,8 @@ class $$EntriesTableTableManager
                 required DateTime modifiedAt,
                 required int version,
                 required bool deleted,
+                Value<String> syncState = const Value.absent(),
+                Value<int> baseVersion = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => EntriesCompanion.insert(
                 id: id,
@@ -2280,6 +2982,8 @@ class $$EntriesTableTableManager
                 modifiedAt: modifiedAt,
                 version: version,
                 deleted: deleted,
+                syncState: syncState,
+                baseVersion: baseVersion,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -2313,6 +3017,155 @@ typedef $$EntriesTableProcessedTableManager =
       EntryRow,
       PrefetchHooks Function()
     >;
+typedef $$ConflictsTableCreateCompanionBuilder = ConflictsCompanion Function({
+  required String entryId,
+  required String serverJson,
+  Value<int> rowid,
+});
+typedef $$ConflictsTableUpdateCompanionBuilder = ConflictsCompanion Function({
+  Value<String> entryId,
+  Value<String> serverJson,
+  Value<int> rowid,
+});
+
+class $$ConflictsTableFilterComposer
+    extends Composer<_$LocalDb, $ConflictsTable> {
+  $$ConflictsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get entryId => $composableBuilder(
+    column: $table.entryId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get serverJson => $composableBuilder(
+    column: $table.serverJson,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$ConflictsTableOrderingComposer
+    extends Composer<_$LocalDb, $ConflictsTable> {
+  $$ConflictsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get entryId => $composableBuilder(
+    column: $table.entryId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get serverJson => $composableBuilder(
+    column: $table.serverJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$ConflictsTableAnnotationComposer
+    extends Composer<_$LocalDb, $ConflictsTable> {
+  $$ConflictsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get entryId =>
+      $composableBuilder(column: $table.entryId, builder: (column) => column);
+
+  GeneratedColumn<String> get serverJson => $composableBuilder(
+    column: $table.serverJson,
+    builder: (column) => column,
+  );
+}
+
+class $$ConflictsTableTableManager
+    extends
+        RootTableManager<
+          _$LocalDb,
+          $ConflictsTable,
+          ConflictRow,
+          $$ConflictsTableFilterComposer,
+          $$ConflictsTableOrderingComposer,
+          $$ConflictsTableAnnotationComposer,
+          $$ConflictsTableCreateCompanionBuilder,
+          $$ConflictsTableUpdateCompanionBuilder,
+          (
+            ConflictRow,
+            BaseReferences<_$LocalDb, $ConflictsTable, ConflictRow>,
+          ),
+          ConflictRow,
+          PrefetchHooks Function()
+        > {
+  $$ConflictsTableTableManager(_$LocalDb db, $ConflictsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ConflictsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ConflictsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ConflictsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> entryId = const Value.absent(),
+                Value<String> serverJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ConflictsCompanion(
+                entryId: entryId,
+                serverJson: serverJson,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String entryId,
+                required String serverJson,
+                Value<int> rowid = const Value.absent(),
+              }) => ConflictsCompanion.insert(
+                entryId: entryId,
+                serverJson: serverJson,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$ConflictsTable, ConflictRow>(table),
+                  BaseReferences<_$LocalDb, $ConflictsTable, ConflictRow>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$ConflictsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LocalDb,
+      $ConflictsTable,
+      ConflictRow,
+      $$ConflictsTableFilterComposer,
+      $$ConflictsTableOrderingComposer,
+      $$ConflictsTableAnnotationComposer,
+      $$ConflictsTableCreateCompanionBuilder,
+      $$ConflictsTableUpdateCompanionBuilder,
+      (ConflictRow, BaseReferences<_$LocalDb, $ConflictsTable, ConflictRow>),
+      ConflictRow,
+      PrefetchHooks Function()
+    >;
 
 class $LocalDbManager {
   final _$LocalDb _db;
@@ -2322,4 +3175,6 @@ class $LocalDbManager {
       $$LayerDefsTableTableManager(_db, _db.layerDefs);
   $$EntriesTableTableManager get entries =>
       $$EntriesTableTableManager(_db, _db.entries);
+  $$ConflictsTableTableManager get conflicts =>
+      $$ConflictsTableTableManager(_db, _db.conflicts);
 }

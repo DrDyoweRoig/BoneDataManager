@@ -33,11 +33,15 @@ class Entry {
     required this.createdAt,
     required this.modifiedBy,
     required this.modifiedAt,
+    this.number = 0,
     this.version = 1,
     this.deleted = false,
   });
 
   final String id;
+
+  /// The counter value behind [refId] (0 when unknown).
+  final int number;
   final String refId;
   final EntryDraft data;
   final String createdBy;
