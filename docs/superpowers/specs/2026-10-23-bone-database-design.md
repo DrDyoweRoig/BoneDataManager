@@ -213,3 +213,12 @@ Els permisos s'apliquen al servidor (Row Level Security de Supabase), no només 
 - **Membres per correu:** l'Owner escriu correu + rol. Si la persona no té compte, la base de dades li apareix quan es registra amb aquest correu. L'app no envia correus propis.
 - A l'escriptori, una base de dades del núvol té sempre una **còpia local** (SQLite a la carpeta triada) que és la que fa servir la interfície; l'Excel automàtic i els backups funcionen igual que en local.
 - Les bases de dades locals continuen funcionant sense compte.
+
+## 17. App mòbil — Android (Pla 3, acordat 2026-10-25)
+
+- **Plataforma:** només **Android** de moment (iPhone més endavant, amb Mac o servei de compilació al núvol). Mateix projecte Flutter que l'escriptori.
+- **Funcions:** iniciar sessió; llista "Your cloud databases"; obrir-ne una; llista d'entrades amb cerca i filtres; New entry / editar / esborrar segons el rol; Observer ID; **exportar Excel i compartir-lo** (full de compartir d'Android).
+- **No té:** crear bases de dades, Structure, Members, Move to cloud, backups, Excel automàtic al costat, bases de dades locals.
+- **Dades:** còpia local interna (a la carpeta privada de l'app, sense preguntar) només per llegir i navegar; **desar sempre requereix connexió** (spec §10). Sense connexió: franja *"You're offline. You can browse, but saving needs a connection."* i Save respon *"You're offline. Saving needs a connection."*; mai s'usen blocs de números al mòbil.
+- **Disseny:** llista d'entrades com a **targetes** (Ref ID gran; element · dent/jaw/side; primers valors de layers); botó flotant *New entry*; el formulari és el mateix (botons grans, scroll, Save fix).
+- **Distribució:** fitxer **APK** instal·lat directament als mòbils (sense Google Play de moment). Publicar a Google Play queda fora d'abast.
