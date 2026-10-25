@@ -32,10 +32,12 @@ final cloudDatabasesProvider = FutureProvider<List<CloudDb>>((ref) async {
 
 /// The sync engine for the open database, when it is a cloud database.
 final syncEngineProvider = Provider<SyncEngine?>((ref) {
-  final store = ref.watch(openStoreProvider);
+  // Rebuild only when the open file or its cloud link changes, not on every structure save.
+  final (store, cloudId) = ref.watch(openStoreProvider.select((s) => (s, s?.cloudId)));
   final api = ref.watch(cloudApiProvider);
-  if (store?.cloudId == null || api == null) return null;
-  final engine = SyncEngine(store!, api);
+  if (store == null || cloudId == null || api == null) return null;
+  final engine = SyncEngine(store, api)
+    ..onDefinitionChanged = () => ref.read(openStoreProvider.notifier).definitionChanged();
   var disposed = false;
   Future<void> stop() async {
     if (disposed) return;

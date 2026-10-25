@@ -55,8 +55,10 @@ abstract class CloudApi {
   Future<void> createDatabase(DatabaseDef def, {required int nextNumber, List<Entry> rows = const []});
   Future<void> updateDefinition(DatabaseDef def);
 
-  /// Online creation: the server assigns consecutive numbers.
-  Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer);
+  /// Online creation: the server assigns consecutive numbers. [ids] are chosen by the client so a
+  /// retry after a lost response returns the same rows instead of creating new ones.
+  Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
+      {required List<String> ids});
   Future<({int start, int end})> reserveBlock(String db, String device, int size);
   Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion});
 

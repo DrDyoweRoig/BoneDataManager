@@ -63,4 +63,19 @@ void main() {
     expect(server.entries('local-1').first.data.side, Side.left);
     await engine.dispose();
   });
+
+  test('I5: big databases upload in chunks', () async {
+    await store.createEntries(List.filled(1200, left), 'AP');
+    await moveToCloud(store, api, 'pc-a');
+    expect(server.entries('local-1').length, 1203);
+    expect(api.createDatabaseCalls, 3);
+  });
+
+  test('M9: edits made after an interrupted upload win on retry', () async {
+    final first = (await store.allEntries()).first;
+    await api.createDatabase(def, nextNumber: 4, rows: await store.entriesIncludingDeleted());
+    await store.updateEntry(first.id, left, 'JM'); // still local: the link never happened
+    await moveToCloud(store, api, 'pc-a');
+    expect(server.entries('local-1').first.data.side, Side.left);
+  });
 }

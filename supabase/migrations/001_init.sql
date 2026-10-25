@@ -120,6 +120,8 @@ create policy entries_read on public.entries for select to authenticated
   using (public.my_role(database_id) is not null);
 
 -- databases, entries and id_blocks are written only through the functions below.
+grant select on public.databases, public.entries, public.members to authenticated;
+grant insert, update, delete on public.members to authenticated;
 
 -- ───────────────────────── Functions (RPC) ─────────────────────────
 
@@ -151,7 +153,13 @@ begin
   from jsonb_to_recordset("rows") as r(id uuid, number int, ref_id text, element_id text, dentition text,
        tooth_type text, jaw text, side text, "values" jsonb, created_by text, created_at timestamptz,
        modified_by text, modified_at timestamptz, version int, deleted boolean)
-  on conflict (id) do nothing;
+  on conflict (id) do update
+    set number = excluded.number, ref_id = excluded.ref_id, element_id = excluded.element_id,
+        dentition = excluded.dentition, tooth_type = excluded.tooth_type, jaw = excluded.jaw,
+        side = excluded.side, "values" = excluded."values", modified_by = excluded.modified_by,
+        modified_at = excluded.modified_at, version = excluded.version, deleted = excluded.deleted,
+        updated_at = now()
+    where public.entries.database_id = db;
 
   update public.databases
   set next_number = greatest(next_number,
@@ -175,15 +183,26 @@ begin
 end $$;
 
 -- Online entry creation: the server hands out consecutive numbers atomically.
+-- Each draft carries a client-chosen "id"; a retry after a lost response returns the same rows.
 create or replace function public.create_entries(db uuid, drafts jsonb, observer text)
 returns setof public.entries language plpgsql security definer set search_path = public as $$
 declare
-  n     int := jsonb_array_length(drafts);
+  n       int := jsonb_array_length(drafts);
   start_n int;
-  p     text;
-  dg    int;
+  p       text;
+  dg      int;
+  ids     uuid[];
 begin
   perform public._require(db, array['owner', 'editor']);
+  select array_agg((v ->> 'id')::uuid) into ids
+  from jsonb_array_elements(drafts) v where v ? 'id';
+
+  if ids is not null and array_length(ids, 1) = n
+     and (select count(*) from public.entries where database_id = db and id = any (ids)) = n then
+    return query select * from public.entries where database_id = db and id = any (ids) order by number;
+    return;
+  end if;
+
   update public.databases set next_number = next_number + n
   where id = db
   returning next_number - n, prefix, digits into start_n, p, dg;
@@ -191,10 +210,12 @@ begin
   return query
   insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
                               "values", created_by, created_at, modified_by, modified_at, version, deleted)
-  select gen_random_uuid(), db, start_n + (d.ord - 1)::int, public._ref(p, dg, start_n + (d.ord - 1)::int),
+  select coalesce((d.v ->> 'id')::uuid, gen_random_uuid()), db, start_n + (d.ord - 1)::int,
+         public._ref(p, dg, start_n + (d.ord - 1)::int),
          d.v ->> 'element_id', d.v ->> 'dentition', d.v ->> 'tooth_type', d.v ->> 'jaw', d.v ->> 'side',
          coalesce(d.v -> 'values', '{}'), observer, now(), observer, now(), 1, false
   from jsonb_array_elements(drafts) with ordinality as d(v, ord)
+  on conflict (id) do nothing
   returning *;
 end $$;
 
@@ -205,6 +226,9 @@ language plpgsql security definer set search_path = public as $$
 declare s int;
 begin
   perform public._require(db, array['owner', 'editor']);
+  if size is null or size < 1 or size > 1000 then
+    raise exception 'Block size must be between 1 and 1000' using errcode = '22023';
+  end if;
   update public.databases set next_number = next_number + size
   where id = db
   returning next_number - size into s;
@@ -218,6 +242,8 @@ end $$;
 -- Upload one entry created or changed on a computer.
 -- New id: inserted (its number must come from a reserved block).
 -- Existing id: updated only if nobody changed it since `base_version`; otherwise returns the server row.
+-- base_version 0 means "created on this computer": it matches the server's first version (an online
+-- create whose answer was lost). A retry of a change the server already has is answered as ok.
 create or replace function public.push_entry(db uuid, e jsonb, base_version int)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
@@ -243,7 +269,19 @@ begin
     return jsonb_build_object('status', 'ok', 'version', 1);
   end if;
 
+  if base_version = 0 then
+    base_version := 1;
+  end if;
   if cur.version <> base_version then
+    if cur.element_id is not distinct from e ->> 'element_id'
+       and cur.dentition is not distinct from e ->> 'dentition'
+       and cur.tooth_type is not distinct from e ->> 'tooth_type'
+       and cur.jaw is not distinct from e ->> 'jaw'
+       and cur.side is not distinct from e ->> 'side'
+       and cur."values" = coalesce(e -> 'values', '{}')
+       and cur.deleted = coalesce((e ->> 'deleted')::boolean, false) then
+      return jsonb_build_object('status', 'ok', 'version', cur.version);
+    end if;
     return jsonb_build_object('status', 'conflict', 'row', to_jsonb(cur));
   end if;
 

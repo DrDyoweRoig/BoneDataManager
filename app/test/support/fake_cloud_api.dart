@@ -4,7 +4,6 @@ import 'package:bone_data_manager/cloud/cloud_api.dart';
 import 'package:bone_data_manager/entries/entry.dart';
 import 'package:bone_data_manager/ids/ref_id.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
-import 'package:uuid/uuid.dart';
 
 /// In-memory stand-in for the Supabase project, shared by several [FakeCloudApi] clients
 /// (one per simulated computer). Mirrors the SQL rules in supabase/migrations/001_init.sql.
@@ -40,10 +39,39 @@ class FakeCloudApi implements CloudApi {
   /// Simulates the server refusing writes (role changed to viewer).
   bool denyWrites = false;
 
-  void _checkWrite() {
+  /// Simulates a lost response: the next write is applied on the server, then the call fails as offline.
+  bool dropNextResponse = false;
+
+  /// Called inside pushEntry before the server applies it (to simulate edits racing a push).
+  Future<void> Function(Entry pushed)? onPush;
+
+  int createDatabaseCalls = 0;
+
+  // Mirrors _require(db, ['owner','editor']).
+  void _checkWrite([String? db]) {
     _check();
-    if (denyWrites) throw const CloudDenied('You do not have permission for this database');
+    final role = db == null ? null : server.members[db]?[email];
+    if (denyWrites || (db != null && role != 'owner' && role != 'editor')) {
+      throw const CloudDenied('You do not have permission for this database');
+    }
   }
+
+  T _respond<T>(T result) {
+    if (dropNextResponse) {
+      dropNextResponse = false;
+      throw const CloudOffline('response lost');
+    }
+    return result;
+  }
+
+  static bool _sameContent(Entry a, Entry b) =>
+      a.data.elementId == b.data.elementId &&
+      a.data.dentition == b.data.dentition &&
+      a.data.toothType == b.data.toothType &&
+      a.data.jaw == b.data.jaw &&
+      a.data.side == b.data.side &&
+      a.deleted == b.deleted &&
+      a.data.values.toString() == b.data.values.toString();
 
   void _check() {
     if (!online) throw const CloudOffline('fake offline');
@@ -79,13 +107,14 @@ class FakeCloudApi implements CloudApi {
   @override
   Future<void> createDatabase(DatabaseDef def, {required int nextNumber, List<Entry> rows = const []}) async {
     _check();
+    createDatabaseCalls++;
     if (!server.defs.containsKey(def.id)) {
       server.defs[def.id] = def;
       server.nextNumber[def.id] = nextNumber;
       server.members[def.id] = {email: 'owner'};
     }
+    // Upload of the owner's own rows: insert or overwrite (on conflict do update).
     for (final e in rows) {
-      if (server.rows[def.id]?.containsKey(e.id) ?? false) continue;
       server._put(def.id, e);
     }
     final maxN = server.entries(def.id).fold(0, (m, e) => e.number > m ? e.number : m);
@@ -100,17 +129,23 @@ class FakeCloudApi implements CloudApi {
   }
 
   @override
-  Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer) async {
-    _check();
+  Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
+      {required List<String> ids}) async {
+    _checkWrite(db);
+    // Retry of a call whose response was lost: return what was created.
+    if (ids.every((id) => server.rows[db]?.containsKey(id) ?? false)) {
+      return _respond([for (final id in ids) server.rows[db]![id]!.$1]);
+    }
     final def = server.defs[db]!;
     var n = server.nextNumber[db]!;
     server.nextNumber[db] = n + drafts.length;
     final now = DateTime.now().toUtc();
-    return [
+    var i = 0;
+    return _respond([
       for (final d in drafts)
         () {
           final e = Entry(
-              id: const Uuid().v4(),
+              id: ids[i++],
               number: n,
               refId: formatRefId(def.prefix, def.digits, n++),
               data: d,
@@ -121,12 +156,13 @@ class FakeCloudApi implements CloudApi {
           server._put(db, e);
           return e;
         }()
-    ];
+    ]);
   }
 
   @override
   Future<({int start, int end})> reserveBlock(String db, String device, int size) async {
-    _check();
+    _checkWrite(db);
+    if (size < 1 || size > 1000) throw const CloudDenied('Block size must be between 1 and 1000');
     final s = server.nextNumber[db]!;
     server.nextNumber[db] = s + size;
     final b = (start: s, end: s + size - 1);
@@ -136,19 +172,36 @@ class FakeCloudApi implements CloudApi {
 
   @override
   Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion}) async {
-    _checkWrite();
+    _checkWrite(db);
+    await onPush?.call(e);
     final cur = server.rows[db]?[e.id]?.$1;
     if (cur == null) {
       if (!(server.blocks[db] ?? []).any((b) => e.number >= b.start && e.number <= b.end)) {
         throw StateError('Number ${e.number} was not reserved for offline use');
       }
       server._put(db, _with(e, version: 1));
-      return PushOk(1);
+      return _respond(PushOk(1));
     }
-    if (cur.version != baseVersion) return PushConflict(cur);
+    // base 0 = "my own creation" (an online create whose response was lost): matches version 1.
+    final base = baseVersion == 0 ? 1 : baseVersion;
+    if (cur.version != base) {
+      // A retry of a change the server already has is not a conflict.
+      return _sameContent(cur, e) ? PushOk(cur.version) : PushConflict(cur);
+    }
     final v = cur.version + 1;
-    server._put(db, _with(e, version: v));
-    return PushOk(v);
+    // The server keeps its own number and Ref ID for the row.
+    server._put(db, Entry(
+        id: e.id,
+        number: cur.number,
+        refId: cur.refId,
+        data: e.data,
+        createdBy: cur.createdBy,
+        createdAt: cur.createdAt,
+        modifiedBy: e.modifiedBy,
+        modifiedAt: e.modifiedAt,
+        version: v,
+        deleted: e.deleted));
+    return _respond(PushOk(v));
   }
 
   @override

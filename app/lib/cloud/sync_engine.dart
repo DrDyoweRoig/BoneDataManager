@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import '../data/local_store.dart';
 import '../entries/entry.dart';
@@ -61,6 +62,10 @@ class SyncEngine implements EntryWriter {
   bool _offline = false;
   Future<void>? _running;
   bool _again = false;
+  bool _disposed = false;
+
+  /// Called when the definition (layers, names…) was changed from another computer.
+  VoidCallback? onDefinitionChanged;
 
   ValueListenable<SyncStatus> get status => _status;
 
@@ -77,24 +82,29 @@ class SyncEngine implements EntryWriter {
   }
 
   void _goOffline() {
-    if (_offline) return;
+    if (_offline || _disposed) return;
     _offline = true;
     _events.add(WentOffline());
   }
 
   Future<void> _publish() async {
+    if (_disposed) return;
+    final pending = (await store.pendingEntries()).length;
+    final conflicts = (await store.conflicts()).length;
+    if (_disposed) return;
     _status.value = SyncStatus(
       connection: _offline ? Connection.offline : Connection.online,
-      pending: (await store.pendingEntries()).length,
-      conflicts: (await store.conflicts()).length,
+      pending: pending,
+      conflicts: conflicts,
     );
   }
 
   @override
   Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer) async {
+    final ids = [for (final _ in drafts) const Uuid().v4()];
     if (!_offline) {
       try {
-        final made = await api.createEntries(_db, drafts, observer);
+        final made = await api.createEntries(_db, drafts, observer, ids: ids);
         await store.insertSynced(made);
         await _publish();
         return made;
@@ -102,7 +112,8 @@ class SyncEngine implements EntryWriter {
         _goOffline();
       }
     }
-    final made = await store.createEntriesFromBlock(drafts, observer);
+    // Same ids: if the online attempt did reach the server, the upload matches it instead of duplicating.
+    final made = await store.createEntriesFromBlock(drafts, observer, ids: ids);
     await _publish();
     return made;
   }
@@ -124,6 +135,7 @@ class SyncEngine implements EntryWriter {
 
   /// One full round: definition, number block, push, pull. Calls made while running are merged.
   Future<void> syncNow() async {
+    if (_disposed) return;
     if (_running != null) {
       _again = true;
       return _running;
@@ -135,33 +147,48 @@ class SyncEngine implements EntryWriter {
     } finally {
       _running = null;
     }
-    if (_again) {
+    if (_again && !_disposed) {
       _again = false;
       await syncNow();
     }
   }
 
   Future<void> _round() async {
+    String? problem;
     try {
       final def = await api.fetchDefinition(_db);
-      if (_fingerprint(def) != _fingerprint(store.def)) await store.updateDefinition(def);
+      if (_fingerprint(def) != _fingerprint(store.def)) {
+        await store.updateDefinition(def);
+        onDefinitionChanged?.call();
+      }
 
       final b = store.block;
       if (b == null || b.end - b.next + 1 < blockSize / 2) {
-        final r = await api.reserveBlock(_db, store.deviceId!, blockSize);
-        await store.setBlock(r.start, r.end);
+        try {
+          final r = await api.reserveBlock(_db, store.deviceId!, blockSize);
+          await store.setBlock(r.start, r.end);
+        } on CloudDenied {
+          // Viewers get no numbers; they only read.
+        }
       }
 
       final conflicted = {for (final c in await store.conflicts()) c.mine.id};
       var pushed = 0;
-      for (final e in await store.pendingEntries()) {
-        if (conflicted.contains(e.id)) continue;
-        switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(e.id))) {
-          case PushOk(:final version):
-            await store.markSynced(e.id, version);
-            pushed++;
-          case PushConflict(:final server):
-            await store.addConflict(server);
+      for (final snapshot in await store.pendingEntries()) {
+        if (_disposed) return;
+        if (conflicted.contains(snapshot.id)) continue;
+        final e = await store.entryById(snapshot.id); // freshest local version
+        if (e == null) continue;
+        try {
+          switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(e.id))) {
+            case PushOk(:final version):
+              await store.markSynced(e.id, version, pushedVersion: e.version);
+              pushed++;
+            case PushConflict(:final server):
+              await store.addConflict(server);
+          }
+        } on CloudDenied catch (err) {
+          problem = err.message; // keep it pending, carry on with the others and the pull
         }
       }
 
@@ -173,16 +200,19 @@ class SyncEngine implements EntryWriter {
       }
       if (changes.isNotEmpty) await store.setLastPull(changes.last.$2);
 
-      if (_offline) {
+      if (_offline && !_disposed) {
         _offline = false;
         _events.add(BackOnline(pushed));
       }
-      _problem.value = null;
+      if (!_disposed) _problem.value = problem;
     } on CloudOffline {
       _goOffline();
     } on CloudDenied catch (e) {
       // Reachable but refused: keep pending changes and say why.
-      _problem.value = e.message;
+      if (!_disposed) _problem.value = e.message;
+    } catch (e) {
+      // Never let a timer- or realtime-triggered round crash the app.
+      if (!_disposed) _problem.value = 'Sync error: $e';
     } finally {
       await _publish();
     }
@@ -215,6 +245,7 @@ class SyncEngine implements EntryWriter {
       });
 
   Future<void> dispose() async {
+    _disposed = true;
     _timer?.cancel();
     await _remote?.cancel();
     await _running;

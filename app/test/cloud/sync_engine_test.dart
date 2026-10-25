@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bone_data_manager/cloud/sync_engine.dart';
@@ -33,8 +34,8 @@ void main() {
 
   /// One simulated computer: its own local copy, connection and engine.
   Future<(SyncEngine, LocalStore, FakeCloudApi)> computer(String device,
-      {int blockSize = 50, File? file}) async {
-    final api = FakeCloudApi(server);
+      {int blockSize = 50, File? file, String email = 'owner@example.com'}) async {
+    final api = FakeCloudApi(server, email: email);
     final store = file == null ? await LocalStore.inMemory(def) : await LocalStore.create(file, def);
     await store.linkToCloud('db1', device);
     final engine = SyncEngine(store, api, blockSize: blockSize);
@@ -180,5 +181,89 @@ void main() {
     api.denyWrites = false;
     await engine.syncNow();
     expect(engine.problem.value, isNull);
+  });
+
+  test('C1: a viewer gets the entries (no number block needed)', () async {
+    final (owner, _, _) = await computer('pc-a');
+    await owner.createEntries([left], 'AP');
+    server.members['db1']!['viewer@example.com'] = 'viewer';
+    final (viewer, store, _) = await computer('pc-v', email: 'viewer@example.com');
+    expect((await store.allEntries()).single.refId, 'MAS-0051');
+    expect(viewer.problem.value, isNull);
+    expect(store.block, isNull);
+  });
+
+  test('C2: an edit made while its entry is being pushed is kept and uploaded next', () async {
+    final (engine, store, api) = await computer('pc-a');
+    final e = (await engine.createEntries([left], 'AP')).single;
+    await store.updateEntry(e.id, right, 'AP');
+    api.onPush = (_) async {
+      api.onPush = null;
+      await store.updateEntry(e.id, const EntryDraft(elementId: 'femur', side: Side.unknown), 'AP');
+    };
+    await engine.syncNow();
+    expect((await store.allEntries()).single.data.side, Side.unknown);
+    expect((await store.pendingEntries()).length, 1);
+    await engine.syncNow();
+    expect(server.entries('db1').single.data.side, Side.unknown);
+    expect(engine.status.value.conflicts, 0);
+    expect(await store.pendingEntries(), isEmpty);
+  });
+
+  test('I1: one refused upload does not stop receiving changes', () async {
+    final (a, storeA, apiA) = await computer('pc-a');
+    final (b, _, _) = await computer('pc-b');
+    final e = (await a.createEntries([left], 'AP')).single;
+    await storeA.updateEntry(e.id, right, 'AP');
+    apiA.denyWrites = true;
+    await b.createEntries([right], 'JM');
+    await a.syncNow();
+    expect(a.problem.value, isNotNull);
+    expect((await storeA.allEntries()).length, 2);
+  });
+
+  test('I2a: a lost response to an online create makes no duplicate', () async {
+    final (engine, store, api) = await computer('pc-a');
+    api.dropNextResponse = true;
+    await engine.createEntries([left], 'AP'); // falls back to the block with the same id
+    await engine.syncNow();
+    expect(server.entries('db1').length, 1);
+    expect((await store.allEntries()).length, 1);
+    expect(engine.status.value.conflicts, 0);
+    expect(await store.pendingEntries(), isEmpty);
+  });
+
+  test('I2b: a lost response to an upload is not reported as a conflict', () async {
+    final (engine, store, api) = await computer('pc-a');
+    final e = (await engine.createEntries([left], 'AP')).single;
+    await store.updateEntry(e.id, right, 'AP');
+    api.dropNextResponse = true;
+    await engine.syncNow(); // applied on the server, response lost
+    await engine.syncNow();
+    expect(engine.status.value.conflicts, 0);
+    expect(await store.pendingEntries(), isEmpty);
+    expect(server.entries('db1').single.data.side, Side.right);
+  });
+
+  test('I4: a disposed engine ignores later sync requests', () async {
+    final api = FakeCloudApi(server);
+    final store = await LocalStore.inMemory(def);
+    await store.linkToCloud('db1', 'pc-z');
+    final engine = SyncEngine(store, api);
+    final running = engine.syncNow();
+    unawaited(engine.syncNow()); // queues a follow-up round
+    await engine.dispose();
+    await running;
+    await engine.syncNow();
+    await store.close();
+  });
+
+  test('M2: definition changes from elsewhere are announced', () async {
+    final (a, _, _) = await computer('pc-a');
+    var announced = 0;
+    a.onDefinitionChanged = () => announced++;
+    await FakeCloudApi(server).updateDefinition(def.copyWith(name: 'Renamed'));
+    await a.syncNow();
+    expect(announced, 1);
   });
 }

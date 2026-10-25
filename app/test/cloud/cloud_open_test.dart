@@ -17,7 +17,7 @@ void main() {
     final api = FakeCloudApi(server);
     const def = DatabaseDef(id: 'db1', name: 'Site/A', prefix: 'MAS-', selectedElements: {'femur'});
     await api.createDatabase(def, nextNumber: 1);
-    await api.createEntries('db1', [const EntryDraft(elementId: 'femur', side: Side.left)], 'JM');
+    await api.createEntries('db1', [const EntryDraft(elementId: 'femur', side: Side.left)], 'JM', ids: ['e1']);
 
     final tmp = await Directory.systemTemp.createTemp('bdm_open');
     final store = await createLocalCopy(api: api, cloudId: 'db1', folder: tmp.path, deviceId: 'pc-a');

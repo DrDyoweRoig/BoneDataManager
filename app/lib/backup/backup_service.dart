@@ -112,6 +112,7 @@ class BackupService {
     final store = await LocalStore.open(copy);
     try {
       await store.setDatabaseId(const Uuid().v4());
+      await store.unlinkFromCloud();
     } finally {
       await store.close();
     }

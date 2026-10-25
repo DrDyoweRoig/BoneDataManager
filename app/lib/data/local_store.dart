@@ -189,15 +189,18 @@ class LocalStore implements EntryWriter {
   }
 
   /// Offline creation: numbers come from this computer's block. All or nothing.
-  Future<List<Entry>> createEntriesFromBlock(List<EntryDraft> drafts, String observer) async {
+  /// [ids] reuse the ids of an online attempt whose answer was lost, so the server can match them.
+  Future<List<Entry>> createEntriesFromBlock(List<EntryDraft> drafts, String observer, {List<String>? ids}) async {
     final b = _block;
     if (b == null || b.next + drafts.length - 1 > b.end) throw NoNumbersLeft();
     final now = _now();
     final created = <Entry>[];
     await _db.transaction(() async {
       var n = b.next;
-      for (final d in drafts) {
-        final row = _rowFor(d, n, observer, now).copyWith(syncState: 'pending');
+      for (var i = 0; i < drafts.length; i++) {
+        final d = drafts[i];
+        var row = _rowFor(d, n, observer, now).copyWith(syncState: 'pending');
+        if (ids != null) row = row.copyWith(id: ids[i]);
         await _db.into(_db.entries).insert(row);
         created.add(_toEntry(row));
         n++;
@@ -229,18 +232,45 @@ class LocalStore implements EntryWriter {
   Future<int> baseVersion(String id) async =>
       (await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingle()).baseVersion;
 
-  Future<void> markSynced(String id, int version) async {
-    await (_db.update(_db.entries)..where((e) => e.id.equals(id))).write(
-        EntriesCompanion(syncState: const Value('synced'), version: Value(version), baseVersion: Value(version)));
+  Future<Entry?> entryById(String id) async {
+    final r = await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingleOrNull();
+    return r == null ? null : _toEntry(r);
   }
 
+  /// The server accepted [pushedVersion] of the row as server [version]. If the row was edited again
+  /// meanwhile, it stays pending (now based on [version]) so the newer edit is uploaded next.
+  Future<void> markSynced(String id, int version, {int? pushedVersion}) => _db.transaction(() async {
+        final r = await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingleOrNull();
+        if (r == null) return;
+        final unchanged = pushedVersion == null || r.version == pushedVersion;
+        await (_db.update(_db.entries)..where((e) => e.id.equals(id))).write(unchanged
+            ? EntriesCompanion(syncState: const Value('synced'), version: Value(version), baseVersion: Value(version))
+            : EntriesCompanion(baseVersion: Value(version)));
+      });
+
   /// Applies a server row. Refuses (returns false) when there is a pending local edit, unless [force].
-  Future<bool> applyRemote(Entry server, {bool force = false}) async {
-    final local = await (_db.select(_db.entries)..where((e) => e.id.equals(server.id))).getSingleOrNull();
-    if (!force && local != null && local.syncState == 'pending') return false;
-    await _db.into(_db.entries).insert(_rowFromEntry(server, 'synced'), mode: InsertMode.insertOrReplace);
-    return true;
-  }
+  Future<bool> applyRemote(Entry server, {bool force = false}) => _db.transaction(() async {
+        final local = await (_db.select(_db.entries)..where((e) => e.id.equals(server.id))).getSingleOrNull();
+        if (!force && local != null && local.syncState == 'pending') return false;
+        await _db.into(_db.entries).insert(_rowFromEntry(server, 'synced'), mode: InsertMode.insertOrReplace);
+        return true;
+      });
+
+  /// Restored copies stand alone: no cloud link, no number block, nothing pending or in conflict.
+  Future<void> unlinkFromCloud() => _db.transaction(() async {
+        await _db.update(_db.meta).write(const MetaCompanion(
+            cloudId: Value(null),
+            deviceId: Value(null),
+            blockNext: Value(null),
+            blockEnd: Value(null),
+            lastPull: Value(null)));
+        await _db.customUpdate("UPDATE entries SET sync_state = 'synced', base_version = version",
+            updates: {_db.entries});
+        await _db.delete(_db.conflicts).go();
+        _cloudId = null;
+        _deviceId = null;
+        _block = null;
+      });
 
   Future<DateTime?> lastPull() async {
     final v = (await _db.select(_db.meta).getSingle()).lastPull;

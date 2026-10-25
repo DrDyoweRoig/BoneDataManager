@@ -65,9 +65,9 @@ class SupabaseCloudApi implements CloudApi {
   static const _pullOverlap = Duration(seconds: 10);
   static const _page = 1000;
 
-  Future<T> _call<T>(Future<T> Function() f) async {
+  Future<T> _call<T>(Future<T> Function() f, {Duration? timeout}) async {
     try {
-      return await f().timeout(timeout);
+      return await f().timeout(timeout ?? this.timeout);
     } catch (e) {
       final mapped = mapCloudError(e);
       if (identical(mapped, e)) rethrow;
@@ -103,20 +103,26 @@ class SupabaseCloudApi implements CloudApi {
 
   @override
   Future<void> createDatabase(DatabaseDef def, {required int nextNumber, List<Entry> rows = const []}) =>
-      _call(() => client.rpc('create_database', params: {
-            'def': defToJson(def, nextNumber: nextNumber),
-            'rows': [for (final e in rows) entryToJson(e)],
-          }));
+      _call(
+          () => client.rpc('create_database', params: {
+                'def': defToJson(def, nextNumber: nextNumber),
+                'rows': [for (final e in rows) entryToJson(e)],
+              }),
+          timeout: const Duration(seconds: 90));
 
   @override
   Future<void> updateDefinition(DatabaseDef def) =>
       _call(() => client.rpc('update_definition', params: {'db': def.id, 'def': defToJson(def)}));
 
   @override
-  Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer) => _call(() async {
+  Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
+          {required List<String> ids}) =>
+      _call(() async {
         final rows = await client.rpc('create_entries', params: {
           'db': db,
-          'drafts': [for (final d in drafts) draftToJson(d)],
+          'drafts': [
+            for (var i = 0; i < drafts.length; i++) {...draftToJson(drafts[i]), 'id': ids[i]}
+          ],
           'observer': observer,
         }) as List;
         return [for (final r in rows) entryFromJson(_map(r))]..sort((a, b) => a.number.compareTo(b.number));
