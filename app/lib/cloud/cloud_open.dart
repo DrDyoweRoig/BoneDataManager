@@ -10,11 +10,12 @@ Future<LocalStore> createLocalCopy({
   required String cloudId,
   required String folder,
   required String deviceId,
+  bool allowOffline = true,
 }) async {
   final def = await api.fetchDefinition(cloudId);
   final store = await LocalStore.create(freeDatabaseFile(folder, def.name), def);
   await store.linkToCloud(cloudId, deviceId);
-  final engine = SyncEngine(store, api);
+  final engine = SyncEngine(store, api, allowOffline: allowOffline);
   await engine.syncNow();
   await engine.dispose();
   return store;

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:bone_data_manager/cloud/cloud_api.dart';
 import 'package:bone_data_manager/cloud/sync_engine.dart';
 import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/data/local_store.dart';
@@ -313,8 +314,45 @@ void main() {
       expect(server.entries('db1').single.data.side, Side.right);
     });
 
+    test('R2: retrying a create whose answer was lost does not duplicate', () async {
+      final (engine, store, api) = await phone();
+      api.dropNextResponse = true;
+      await expectLater(engine.createEntries([left], 'AP', ids: ['id-1']), throwsA(isA<NeedsConnection>()));
+      api.online = true;
+      await engine.createEntries([left], 'AP', ids: ['id-1']);
+      expect(server.entries('db1').length, 1);
+      expect((await store.allEntries()).length, 1);
+    });
+
+    test('R3: connection lost during an edit upload: kept on the phone, user told, uploaded later', () async {
+      final (engine, store, api) = await phone();
+      final e = (await engine.createEntries([left], 'AP')).single;
+      api.onPush = (_) async {
+        api.onPush = null;
+        throw const CloudOffline('dropped');
+      };
+      await expectLater(engine.updateEntry(e.id, right, 'AP'),
+          throwsA(isA<NeedsConnection>().having((n) => n.keptOnDevice, 'keptOnDevice', isTrue)));
+      expect((await store.pendingEntries()).length, 1);
+      expect(server.entries('db1').single.data.side, Side.left);
+      await engine.syncNow();
+      expect(server.entries('db1').single.data.side, Side.right);
+    });
+
+    test('R3: an edit is pushed by the call itself, not by an older round', () async {
+      final (engine, store, _) = await phone();
+      final e = (await engine.createEntries([left], 'AP')).single;
+      final slowRound = engine.syncNow();
+      await engine.updateEntry(e.id, right, 'AP');
+      expect(server.entries('db1').single.data.side, Side.right);
+      expect(await store.pendingEntries(), isEmpty);
+      await slowRound;
+    });
+
     test('the message says saving needs a connection', () {
       expect(NeedsConnection().toString(), "You're offline. Saving needs a connection.");
+      expect(NeedsConnection(keptOnDevice: true).toString(),
+          "You're offline. The change is kept on this phone and will upload when you're back online.");
     });
   });
 }

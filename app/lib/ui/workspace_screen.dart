@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../catalog/catalog.dart';
+import '../cloud/cloud_api.dart';
 import '../cloud/sync_engine.dart';
 import '../common/platform.dart';
 import '../common/enums.dart';
@@ -162,7 +163,14 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
         ],
       ),
     );
-    if (ok == true) await (ref.read(syncEngineProvider) ?? store).deleteEntry(e.id, _observer ?? '');
+    if (ok != true) return;
+    try {
+      await (ref.read(syncEngineProvider) ?? store).deleteEntry(e.id, _observer ?? '');
+    } on NeedsConnection catch (err) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err.toString())));
+    } on CloudDenied catch (err) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err.message)));
+    }
   }
 
   Future<void> _export(LocalStore store) async {

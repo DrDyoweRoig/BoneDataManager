@@ -35,8 +35,15 @@ class SyncStatus {
 
 /// Mobile: a save was attempted without a connection.
 class NeedsConnection implements Exception {
+  NeedsConnection({this.keptOnDevice = false});
+
+  /// The connection dropped mid-upload: the change is stored locally and uploads on the next sync.
+  final bool keptOnDevice;
+
   @override
-  String toString() => "You're offline. Saving needs a connection.";
+  String toString() => keptOnDevice
+      ? "You're offline. The change is kept on this phone and will upload when you're back online."
+      : "You're offline. Saving needs a connection.";
 }
 
 sealed class SyncEvent {}
@@ -121,10 +128,11 @@ class SyncEngine implements EntryWriter {
   }
 
   @override
-  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer) async {
+  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer, {List<String>? ids}) async {
+    ids ??= [for (final _ in drafts) const Uuid().v4()];
     if (!allowOffline) {
       try {
-        final made = await api.createEntries(_db, drafts, observer, ids: [for (final _ in drafts) const Uuid().v4()]);
+        final made = await api.createEntries(_db, drafts, observer, ids: ids);
         await store.insertSynced(made);
         await _publish();
         return made;
@@ -134,7 +142,6 @@ class SyncEngine implements EntryWriter {
         throw NeedsConnection();
       }
     }
-    final ids = [for (final _ in drafts) const Uuid().v4()];
     if (!_offline) {
       try {
         final made = await api.createEntries(_db, drafts, observer, ids: ids);
@@ -156,7 +163,7 @@ class SyncEngine implements EntryWriter {
     if (!allowOffline) await _requireConnection();
     final e = await store.updateEntry(id, data, observer);
     await _publish();
-    allowOffline ? unawaited(syncNow()) : await syncNow();
+    allowOffline ? unawaited(syncNow()) : await _pushNow(id);
     return e;
   }
 
@@ -165,7 +172,26 @@ class SyncEngine implements EntryWriter {
     if (!allowOffline) await _requireConnection();
     await store.deleteEntry(id, observer);
     await _publish();
-    allowOffline ? unawaited(syncNow()) : await syncNow();
+    allowOffline ? unawaited(syncNow()) : await _pushNow(id);
+  }
+
+  /// Mobile: upload this one change before returning, so "saved" means "on the server".
+  Future<void> _pushNow(String id) async {
+    final e = await store.entryById(id);
+    if (e == null) return;
+    try {
+      switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(id))) {
+        case PushOk(:final version):
+          await store.markSynced(id, version, pushedVersion: e.version);
+        case PushConflict(:final server):
+          await store.addConflict(server);
+      }
+    } on CloudOffline {
+      _goOffline();
+      throw NeedsConnection(keptOnDevice: true);
+    } finally {
+      await _publish();
+    }
   }
 
   /// One full round: definition, number block, push, pull. Calls made while running are merged.

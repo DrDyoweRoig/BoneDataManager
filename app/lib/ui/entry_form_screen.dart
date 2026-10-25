@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 import '../catalog/catalog.dart';
 import '../cloud/sync_engine.dart';
@@ -45,6 +46,9 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   Set<String> _types = {};
   late Map<String, Object?> _values;
   final Map<String, String> _numberText = {};
+
+  /// Ids for new entries, reused if Save is pressed again (no duplicates after a lost answer).
+  final List<String> _newIds = [];
   String _search = '';
   String? _error;
   bool _saving = false;
@@ -141,10 +145,18 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
       if (_editing) {
         await writer.updateEntry(widget.entry!.id, drafts.single, widget.observer);
       } else {
-        await writer.createEntries(drafts, widget.observer);
+        while (_newIds.length < drafts.length) {
+          _newIds.add(const Uuid().v4());
+        }
+        await writer.createEntries(drafts, widget.observer, ids: _newIds.sublist(0, drafts.length));
       }
       if (mounted) Navigator.of(context).pop(true);
     } on NeedsConnection catch (e) {
+      if (e.keptOnDevice && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+        Navigator.of(context).pop(true);
+        return;
+      }
       if (mounted) {
         setState(() {
           _saving = false;

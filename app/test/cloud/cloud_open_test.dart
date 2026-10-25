@@ -28,4 +28,18 @@ void main() {
     await store.close();
     await tmp.delete(recursive: true);
   });
+
+  test('R1: a phone opening a database reserves no numbers', () async {
+    final server = FakeCloudServer();
+    final api = FakeCloudApi(server);
+    await api.createDatabase(const DatabaseDef(id: 'db2', name: 'Phone'), nextNumber: 1);
+    final tmp = await Directory.systemTemp.createTemp('bdm_open_phone');
+    final store =
+        await createLocalCopy(api: api, cloudId: 'db2', folder: tmp.path, deviceId: 'phone', allowOffline: false);
+    expect(store.block, isNull);
+    expect(server.blocks['db2'] ?? [], isEmpty);
+    expect(server.nextNumber['db2'], 1);
+    await store.close();
+    await tmp.delete(recursive: true);
+  });
 }

@@ -43,7 +43,11 @@ class HomeScreen extends ConsumerWidget {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await ref.read(openStoreProvider.notifier).set(createLocalCopy(
-          api: ref.read(cloudApiProvider)!, cloudId: db.id, folder: folder, deviceId: settings.deviceId));
+          api: ref.read(cloudApiProvider)!,
+          cloudId: db.id,
+          folder: folder,
+          deviceId: settings.deviceId,
+          allowOffline: !isMobile));
     } on CloudOffline {
       messenger.showSnackBar(const SnackBar(
           content: Text("You're offline. Connect to the internet to open this database for the first time.")));
@@ -251,11 +255,14 @@ class _AccountButton extends ConsumerWidget {
       );
     }
     return MenuAnchor(
-      builder: (context, controller, _) => TextButton.icon(
-        onPressed: () => controller.isOpen ? controller.close() : controller.open(),
-        icon: const Icon(Icons.account_circle_outlined),
-        label: Text(email),
-      ),
+      builder: (context, controller, _) {
+        void toggle() => controller.isOpen ? controller.close() : controller.open();
+        // Phones: an icon (email in the tooltip) so a long address can't overflow the app bar.
+        if (isMobile) {
+          return IconButton(tooltip: email, onPressed: toggle, icon: const Icon(Icons.account_circle_outlined));
+        }
+        return TextButton.icon(onPressed: toggle, icon: const Icon(Icons.account_circle_outlined), label: Text(email));
+      },
       menuChildren: [
         MenuItemButton(leadingIcon: const Icon(Icons.logout), onPressed: auth.signOut, child: const Text('Sign out')),
       ],

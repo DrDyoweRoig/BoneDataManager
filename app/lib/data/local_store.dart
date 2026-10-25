@@ -115,13 +115,14 @@ class LocalStore implements EntryWriter {
   }
 
   @override
-  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer) async {
+  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer, {List<String>? ids}) async {
     final now = _now();
     final created = <Entry>[];
     await _db.transaction(() async {
       var n = (await _db.select(_db.meta).getSingle()).nextNumber;
-      for (final d in drafts) {
-        final row = _rowFor(d, n, observer, now);
+      for (var i = 0; i < drafts.length; i++) {
+        var row = _rowFor(drafts[i], n, observer, now);
+        if (ids != null) row = row.copyWith(id: ids[i]);
         await _db.into(_db.entries).insert(row);
         created.add(_toEntry(row));
         n++;

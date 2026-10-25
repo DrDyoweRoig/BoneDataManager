@@ -80,6 +80,7 @@ void main() {
     final c = await _pump(tester, role: 'viewer');
     expect(find.text('New entry'), findsNothing);
     expect(tester.widget<EntryCard>(find.byType(EntryCard)).onTap, isNull);
+    expect(tester.widget<EntryCard>(find.byType(EntryCard)).onLongPress, isNull);
     await _close(tester, c);
   });
 
