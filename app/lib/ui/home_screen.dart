@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../cloud/cloud_api.dart';
 import '../cloud/cloud_open.dart';
+import '../common/platform.dart';
 import '../state/cloud_providers.dart';
 import '../state/providers.dart';
 import 'auth/sign_in_screen.dart';
@@ -32,8 +34,11 @@ class HomeScreen extends ConsumerWidget {
     }
     final settings = await ref.read(settingsProvider.future);
     if (!context.mounted) return;
-    final folder = await showDialog<String>(
-        context: context, builder: (_) => _CopyFolderDialog(name: db.name, initial: settings.databasesDir));
+    // Phones keep the copy in the app's private storage; desktops let the user choose.
+    final folder = isMobile
+        ? '${(await getApplicationSupportDirectory()).path}${Platform.pathSeparator}databases'
+        : await showDialog<String>(
+            context: context, builder: (_) => _CopyFolderDialog(name: db.name, initial: settings.databasesDir));
     if (folder == null || !context.mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -92,9 +97,42 @@ class HomeScreen extends ConsumerWidget {
     ];
   }
 
+  Widget _mobileBody(BuildContext context, WidgetRef ref, ThemeData theme) {
+    final auth = ref.watch(authServiceProvider);
+    final signedIn = ref.watch(signedInEmailProvider).value != null;
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Icon(Icons.dataset_outlined, size: 40, color: theme.colorScheme.primary),
+        const SizedBox(height: 8),
+        Text('Bone Data Manager', style: theme.textTheme.headlineSmall, textAlign: TextAlign.center),
+        if (!signedIn) ...[
+          const SizedBox(height: 32),
+          Text("Sign in to open your team's databases.", textAlign: TextAlign.center, style: theme.textTheme.bodyLarge),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: auth == null
+                ? null
+                : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => SignInScreen(auth: auth))),
+            icon: const Icon(Icons.login),
+            label: const Text('Sign in'),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
+          ),
+        ] else
+          ..._cloudSection(context, ref, theme),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    if (isMobile) {
+      return Scaffold(
+        appBar: AppBar(actions: const [_AccountButton(), SizedBox(width: 8)]),
+        body: SafeArea(child: _mobileBody(context, ref, theme)),
+      );
+    }
     final recents = ref.watch(recentsProvider).value ?? const [];
     return Scaffold(
       appBar: AppBar(actions: const [_AccountButton(), SizedBox(width: 8)]),
