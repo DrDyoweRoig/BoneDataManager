@@ -3,6 +3,12 @@
 -- A Ref ID may now be shared by several rows; one element appears once per ID among live rows.
 alter table public.entries drop constraint if exists entries_database_id_number_key;
 alter table public.entries drop constraint if exists entries_database_id_ref_id_key;
+do $$
+begin
+  if exists (select 1 from pg_constraint where conrelid = 'public.entries'::regclass and contype = 'u') then
+    raise exception 'entries still has a UNIQUE constraint on number or ref_id; drop it, then rerun this file';
+  end if;
+end $$;
 create unique index if not exists entries_one_element_per_id on public.entries
   (database_id, number, element_id, coalesce(dentition, ''), coalesce(tooth_type, ''),
    coalesce(jaw, ''), coalesce(side, ''))
@@ -55,6 +61,7 @@ declare
   eid uuid := (e ->> 'id')::uuid;
   num int  := (e ->> 'number')::int;
   cur public.entries;
+  dup public.entries;
   v   int;
 begin
   perform public._require(db, array['owner', 'editor']);
@@ -67,12 +74,23 @@ begin
        and not exists (select 1 from public.entries x where x.database_id = db and x.number = num) then
       raise exception 'Number % was not reserved for offline use', num using errcode = '22023';
     end if;
-    insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
-                                "values", created_by, created_at, modified_by, modified_at, version, deleted)
-    values (eid, db, num, e ->> 'ref_id', e ->> 'element_id', e ->> 'dentition', e ->> 'tooth_type',
-            e ->> 'jaw', e ->> 'side', coalesce(e -> 'values', '{}'), coalesce(e ->> 'created_by', ''),
-            (e ->> 'created_at')::timestamptz, coalesce(e ->> 'modified_by', ''),
-            (e ->> 'modified_at')::timestamptz, 1, coalesce((e ->> 'deleted')::boolean, false));
+    begin
+      insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
+                                  "values", created_by, created_at, modified_by, modified_at, version, deleted)
+      values (eid, db, num, e ->> 'ref_id', e ->> 'element_id', e ->> 'dentition', e ->> 'tooth_type',
+              e ->> 'jaw', e ->> 'side', coalesce(e -> 'values', '{}'), coalesce(e ->> 'created_by', ''),
+              (e ->> 'created_at')::timestamptz, coalesce(e ->> 'modified_by', ''),
+              (e ->> 'modified_at')::timestamptz, 1, coalesce((e ->> 'deleted')::boolean, false));
+    exception when unique_violation then
+      -- The same tooth was added to this Ref ID from another device.
+      select * into dup from public.entries x
+      where x.database_id = db and x.number = num and not x.deleted and x.id <> eid
+        and x.element_id is not distinct from e ->> 'element_id' and x.dentition is not distinct from e ->> 'dentition'
+        and x.tooth_type is not distinct from e ->> 'tooth_type' and x.jaw is not distinct from e ->> 'jaw'
+        and x.side is not distinct from e ->> 'side'
+      limit 1;
+      return jsonb_build_object('status', 'duplicate', 'row', to_jsonb(dup));
+    end;
     return jsonb_build_object('status', 'ok', 'version', 1);
   end if;
 
@@ -92,13 +110,24 @@ begin
     return jsonb_build_object('status', 'conflict', 'row', to_jsonb(cur));
   end if;
 
-  update public.entries
-  set element_id = e ->> 'element_id', dentition = e ->> 'dentition', tooth_type = e ->> 'tooth_type',
-      jaw = e ->> 'jaw', side = e ->> 'side', "values" = coalesce(e -> 'values', '{}'),
-      modified_by = coalesce(e ->> 'modified_by', ''), modified_at = (e ->> 'modified_at')::timestamptz,
-      deleted = coalesce((e ->> 'deleted')::boolean, false),
-      version = cur.version + 1, updated_at = now()
-  where id = eid
-  returning version into v;
+  begin
+    update public.entries
+    set element_id = e ->> 'element_id', dentition = e ->> 'dentition', tooth_type = e ->> 'tooth_type',
+        jaw = e ->> 'jaw', side = e ->> 'side', "values" = coalesce(e -> 'values', '{}'),
+        modified_by = coalesce(e ->> 'modified_by', ''), modified_at = (e ->> 'modified_at')::timestamptz,
+        deleted = coalesce((e ->> 'deleted')::boolean, false),
+        version = cur.version + 1, updated_at = now()
+    where id = eid
+    returning version into v;
+  exception when unique_violation then
+    -- The edit turns this row into a tooth another row already holds under the same Ref ID.
+    select * into dup from public.entries x
+    where x.database_id = db and x.number = cur.number and not x.deleted and x.id <> eid
+      and x.element_id is not distinct from e ->> 'element_id' and x.dentition is not distinct from e ->> 'dentition'
+      and x.tooth_type is not distinct from e ->> 'tooth_type' and x.jaw is not distinct from e ->> 'jaw'
+      and x.side is not distinct from e ->> 'side'
+    limit 1;
+    return jsonb_build_object('status', 'duplicate', 'row', to_jsonb(dup));
+  end;
   return jsonb_build_object('status', 'ok', 'version', v);
 end $$;

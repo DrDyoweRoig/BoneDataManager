@@ -25,6 +25,12 @@ class PushConflict extends PushResult {
   final Entry server;
 }
 
+/// Another row already holds this tooth under the same Ref ID (added on another device).
+class PushDuplicate extends PushResult {
+  PushDuplicate(this.existing);
+  final Entry existing;
+}
+
 /// The cloud could not be reached (no internet, timeout, server down).
 class CloudOffline implements Exception {
   const CloudOffline([this.cause]);

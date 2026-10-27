@@ -169,10 +169,20 @@ class SyncEngine implements EntryWriter {
     await _publish();
     if (allowOffline) {
       unawaited(syncNow());
-    } else {
+      return made;
+    }
+    try {
       for (final e in made) {
         await _pushNow(e.id);
       }
+    } on CloudDenied {
+      await store.discardNew(made.map((e) => e.id)); // phone: saved means on the server
+      await _publish();
+      rethrow;
+    } on ToothAlreadyInGroup {
+      await store.discardNew(made.map((e) => e.id));
+      await _publish();
+      rethrow;
     }
     return made;
   }
@@ -204,6 +214,9 @@ class SyncEngine implements EntryWriter {
           await store.markSynced(id, version, pushedVersion: e.version);
         case PushConflict(:final server):
           await store.addConflict(server);
+        case PushDuplicate(:final existing):
+          if (await store.baseVersion(id) == 0) throw ToothAlreadyInGroup(elementLabel(e.data), e.refId);
+          await store.addConflict(existing, mineId: id);
       }
     } on CloudOffline {
       _goOffline();
@@ -271,6 +284,8 @@ class SyncEngine implements EntryWriter {
               pushed++;
             case PushConflict(:final server):
               await store.addConflict(server);
+            case PushDuplicate(:final existing):
+              await store.addConflict(existing, mineId: e.id);
           }
         } on CloudDenied catch (err) {
           problem = err.message; // keep it pending, carry on with the others and the pull
@@ -306,6 +321,11 @@ class SyncEngine implements EntryWriter {
   /// Settles a conflict: upload this computer's version, or take the cloud's.
   Future<void> resolve(String entryId, {required bool keepMine}) async {
     final c = (await store.conflicts()).firstWhere((c) => c.mine.id == entryId);
+    if (c.mine.id != c.server.id) {
+      await _resolveDuplicate(c.mine, c.server, keepMine: keepMine);
+      await _publish();
+      return;
+    }
     if (keepMine) {
       switch (await api.pushEntry(_db, c.mine, baseVersion: c.server.version)) {
         case PushOk(:final version):
@@ -313,12 +333,59 @@ class SyncEngine implements EntryWriter {
           await store.removeConflict(entryId);
         case PushConflict(:final server):
           await store.addConflict(server); // changed again meanwhile: ask again
+        case PushDuplicate(:final existing):
+          await store.addConflict(existing, mineId: entryId); // mine now clashes with another row
       }
     } else {
       await store.applyRemote(c.server, force: true);
       await store.removeConflict(entryId);
     }
     await _publish();
+  }
+
+  /// Two rows hold the same tooth under one Ref ID. Keep mine: the cloud row is deleted and mine
+  /// uploads on the next sync. Keep the cloud's: mine is dropped (or, if it was an edit, reverted).
+  Future<void> _resolveDuplicate(Entry mine, Entry server, {required bool keepMine}) async {
+    if (keepMine) {
+      final gone = Entry(
+          id: server.id,
+          number: server.number,
+          refId: server.refId,
+          data: server.data,
+          createdBy: server.createdBy,
+          createdAt: server.createdAt,
+          modifiedBy: mine.modifiedBy,
+          modifiedAt: DateTime.now().toUtc(),
+          version: server.version,
+          deleted: true);
+      switch (await api.pushEntry(_db, gone, baseVersion: server.version)) {
+        case PushOk(:final version):
+          await store.applyRemote(
+              Entry(
+                  id: gone.id,
+                  number: gone.number,
+                  refId: gone.refId,
+                  data: gone.data,
+                  createdBy: gone.createdBy,
+                  createdAt: gone.createdAt,
+                  modifiedBy: gone.modifiedBy,
+                  modifiedAt: gone.modifiedAt,
+                  version: version,
+                  deleted: true),
+              force: true);
+          await store.removeConflict(mine.id);
+        case PushConflict(:final server) || PushDuplicate(existing: final server):
+          await store.addConflict(server, mineId: mine.id); // changed again meanwhile: ask again
+      }
+    } else {
+      await store.removeConflict(mine.id);
+      if (await store.baseVersion(mine.id) == 0) {
+        await store.discardNew([mine.id]);
+      } else {
+        await store.forgetLocalEdit(mine.id);
+      }
+      await store.applyRemote(server, force: true);
+    }
   }
 
   static String _fingerprint(DatabaseDef d) => jsonEncode({

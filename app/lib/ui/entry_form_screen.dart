@@ -199,6 +199,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   void _change(VoidCallback f) => setState(() {
         f();
         _error = null;
+        if (_mode != _Mode.teeth || _teeth.length < 2) _sharedId = false; // asked again for each new group
       });
 
   @override

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bone_data_manager/cloud/cloud_api.dart';
+import 'package:bone_data_manager/catalog/catalog.dart';
 import 'package:bone_data_manager/cloud/sync_engine.dart';
 import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/data/local_store.dart';
@@ -412,11 +413,84 @@ void main() {
 
   test('a sync requested during a running round waits for a round that includes its change', () async {
     final (engine, store, api) = await computer('pc-a');
-    final e = (await engine.createEntries([left], 'AP')).single;
-    final first = engine.syncNow(); // round in flight
-    await store.updateEntry(e.id, right, 'AP');
-    await engine.syncNow(); // must not return with the old round
-    expect(server.entries('db1').single.data.side, Side.right);
-    await first;
+    final made = await engine.createEntries([left, left], 'AP');
+    await store.updateEntry(made[0].id, right, 'AP');
+    Future<void>? second;
+    api.onPush = (_) async {
+      // Round 1 has already read its pending list; this change can only go up in a later round.
+      api.onPush = null;
+      await store.updateEntry(made[1].id, right, 'AP');
+      second = engine.syncNow();
+    };
+    await engine.syncNow();
+    await second;
+    expect(server.entries('db1').map((e) => e.data.side), [Side.right, Side.right]);
+  });
+
+  group('two computers add the same tooth to one Ref ID', () {
+    EntryDraft t(String type) => EntryDraft(
+        elementId: kTeethId, dentition: Dentition.permanent, toothType: type, jaw: Jaw.lower, side: Side.left);
+
+    Future<(SyncEngine, LocalStore, String)> clash() async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      final (b, _, _) = await computer('pc-b');
+      final first = (await a.createEntries([t('M1')], 'AP')).single;
+      await b.syncNow();
+      apiA.online = false;
+      final mine = (await a.addToGroup(first.refId, first.number, [t('M2')], 'AP')).single;
+      await b.addToGroup(first.refId, first.number, [t('M2')], 'JM');
+      await b.syncNow();
+      apiA.online = true;
+      await a.syncNow();
+      return (a, storeA, mine.id);
+    }
+
+    test('becomes a conflict on reconnect; nothing lost, nothing stuck', () async {
+      final (a, storeA, mineId) = await clash();
+      expect(a.status.value.conflicts, 1);
+      expect(a.problem.value, isNull);
+      expect((await storeA.entryById(mineId))!.data.toothType, 'M2');
+      expect(server.entries('db1').where((e) => !e.deleted).map((e) => e.data.toothType), ['M1', 'M2']);
+    });
+
+    test('keeping the cloud version drops my duplicate', () async {
+      final (a, storeA, mineId) = await clash();
+      await a.resolve(mineId, keepMine: false);
+      await a.syncNow();
+      expect(await storeA.entryById(mineId), isNull);
+      final n = server.entries('db1').first.number;
+      expect((await storeA.entriesInGroup(n)).map((e) => e.createdBy), ['AP', 'JM']);
+      expect([a.status.value.conflicts, a.status.value.pending], [0, 0]);
+    });
+
+    test("keeping this computer's version replaces the cloud one", () async {
+      final (a, storeA, mineId) = await clash();
+      await a.resolve(mineId, keepMine: true);
+      await a.syncNow();
+      final live = server.entries('db1').where((e) => !e.deleted && e.data.toothType == 'M2').toList();
+      expect(live.single.id, mineId);
+      final n = server.entries('db1').first.number;
+      expect((await storeA.entriesInGroup(n)).map((e) => e.id).contains(mineId), isTrue);
+      expect([a.status.value.conflicts, a.status.value.pending], [0, 0]);
+    });
+
+    test('phone: adding a tooth the cloud already has is refused and undone', () async {
+      final (b, _, _) = await computer('pc-b');
+      final first = (await b.createEntries([t('M1')], 'JM')).single;
+      final api = FakeCloudApi(server);
+      final phone = await LocalStore.inMemory(def);
+      await phone.linkToCloud('db1', 'phone');
+      final engine = SyncEngine(phone, api, allowOffline: false);
+      cleanup.add(() async {
+        await engine.dispose();
+        await phone.close();
+      });
+      await engine.syncNow();
+      await b.addToGroup(first.refId, first.number, [t('M2')], 'JM'); // phone hasn't pulled it yet
+      await expectLater(engine.addToGroup(first.refId, first.number, [t('M2')], 'AP'),
+          throwsA(isA<ToothAlreadyInGroup>()));
+      expect((await phone.entriesInGroup(first.number)).where((e) => e.createdBy == 'AP'), isEmpty);
+      expect(await phone.pendingEntries(), isEmpty);
+    });
   });
 }

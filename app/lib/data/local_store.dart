@@ -158,6 +158,9 @@ class LocalStore implements EntryWriter {
   Future<Entry> updateEntry(String id, EntryDraft data, String observer) async {
     return _db.transaction(() async {
       final old = await (_db.select(_db.entries)..where((e) => e.id.equals(id))).getSingle();
+      if ((await _clashes(old.number, data, exceptId: id)).isNotEmpty) {
+        throw ToothAlreadyInGroup(elementLabel(data), old.refId);
+      }
       final row = old.copyWith(
         syncState: _cloudId == null ? old.syncState : 'pending',
         elementId: data.elementId,
@@ -266,13 +269,29 @@ class LocalStore implements EntryWriter {
     return created;
   }
 
+  /// Live rows other than [exceptId] holding the same element under Ref ID number [number].
+  Future<List<Entry>> _clashes(int number, EntryDraft d, {required String exceptId}) async => [
+        for (final e in await entriesInGroup(number))
+          if (e.id != exceptId && _elementKey(e.data) == _elementKey(d)) e
+      ];
+
   /// Rows that already exist on the server (created online or pulled).
   Future<void> insertSynced(List<Entry> rows) async {
-    await _db.batch((b) {
-      for (final e in rows) {
-        b.insert(_db.entries, _rowFromEntry(e, 'synced'), mode: InsertMode.insertOrReplace);
-      }
-    });
+    for (final e in rows) {
+      await applyRemote(e, force: true);
+    }
+  }
+
+  /// Drops rows created here that never reached the server (an add the server refused).
+  Future<void> discardNew(Iterable<String> ids) => (_db.delete(_db.entries)
+        ..where((e) => e.id.isIn(ids) & e.baseVersion.equals(0) & e.syncState.equals('pending')))
+      .go();
+
+  /// Gives up a local edit: the next pull restores the server's version of the row.
+  Future<void> forgetLocalEdit(String id) async {
+    await (_db.update(_db.entries)..where((e) => e.id.equals(id)))
+        .write(const EntriesCompanion(syncState: Value('synced')));
+    await _db.update(_db.meta).write(const MetaCompanion(lastPull: Value(null)));
   }
 
   /// Created or changed here and not uploaded yet (deleted ones included).
@@ -304,10 +323,24 @@ class LocalStore implements EntryWriter {
       });
 
   /// Applies a server row. Refuses (returns false) when there is a pending local edit, unless [force].
+  /// If another local row holds the same tooth under the same Ref ID: a pending one becomes a conflict
+  /// (the server row waits for the user's choice), a synced one is stale and is marked deleted.
+  /// Never uses REPLACE, which would silently delete whatever row a unique index points at.
   Future<bool> applyRemote(Entry server, {bool force = false}) => _db.transaction(() async {
         final local = await (_db.select(_db.entries)..where((e) => e.id.equals(server.id))).getSingleOrNull();
         if (!force && local != null && local.syncState == 'pending') return false;
-        await _db.into(_db.entries).insert(_rowFromEntry(server, 'synced'), mode: InsertMode.insertOrReplace);
+        if (!server.deleted) {
+          for (final other in await _clashes(server.number, server.data, exceptId: server.id)) {
+            final row = await (_db.select(_db.entries)..where((e) => e.id.equals(other.id))).getSingle();
+            if (row.syncState == 'pending') {
+              await addConflict(server, mineId: other.id);
+              return true;
+            }
+            await (_db.update(_db.entries)..where((e) => e.id.equals(other.id)))
+                .write(const EntriesCompanion(deleted: Value(true)));
+          }
+        }
+        await _db.into(_db.entries).insertOnConflictUpdate(_rowFromEntry(server, 'synced'));
         return true;
       });
 
@@ -335,8 +368,10 @@ class LocalStore implements EntryWriter {
   Future<void> setLastPull(DateTime t) =>
       _db.update(_db.meta).write(MetaCompanion(lastPull: Value(t.toUtc().toIso8601String())));
 
-  Future<void> addConflict(Entry server) => _db.into(_db.conflicts).insert(
-      ConflictRow(entryId: server.id, serverJson: jsonEncode(entryToJson(server))),
+  /// [mineId]: the local row in conflict when it differs from the server row's id (two devices added
+  /// the same tooth to one Ref ID).
+  Future<void> addConflict(Entry server, {String? mineId}) => _db.into(_db.conflicts).insert(
+      ConflictRow(entryId: mineId ?? server.id, serverJson: jsonEncode(entryToJson(server))),
       mode: InsertMode.insertOrReplace);
 
   Future<List<({Entry mine, Entry server})>> conflicts() async {

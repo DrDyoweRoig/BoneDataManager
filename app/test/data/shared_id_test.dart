@@ -65,4 +65,40 @@ void main() {
     await store.addToGroup(made.single.refId, made.single.number, [tooth('M2')], 'AP');
     expect((await store.pendingEntries()).single.data.toothType, 'M2');
   });
+
+  test('editing a tooth into one already in its Ref ID is refused', () async {
+    final made = await store.createEntries([tooth('M1'), tooth('M2')], 'AP', sharedId: true);
+    await expectLater(store.updateEntry(made.first.id, tooth('M2'), 'AP'),
+        throwsA(isA<ToothAlreadyInGroup>().having((e) => e.toString(), 'message', 'M2 · Lower · Left is already in MAS-0001')));
+    expect((await store.entryById(made.first.id))!.data.toothType, 'M1');
+  });
+
+  Entry remote(String id, String type, {int version = 1}) => Entry(
+      id: id,
+      number: 1,
+      refId: 'MAS-0001',
+      data: tooth(type),
+      createdBy: 'JM',
+      createdAt: DateTime.utc(2026),
+      modifiedBy: 'JM',
+      modifiedAt: DateTime.utc(2026),
+      version: version);
+
+  test('a pulled row clashing with a pending local tooth becomes a conflict, nothing is deleted', () async {
+    await store.linkToCloud('cloud', 'pc');
+    await store.insertSynced([remote('a', 'M1')]);
+    final mine = (await store.addToGroup('MAS-0001', 1, [tooth('M2')], 'AP')).single; // pending
+    await store.applyRemote(remote('b', 'M2'));
+    expect((await store.entryById(mine.id))!.data.toothType, 'M2');
+    expect(await store.entryById('b'), isNull);
+    final c = (await store.conflicts()).single;
+    expect([c.mine.id, c.server.id], [mine.id, 'b']);
+  });
+
+  test('a pulled row clashing with a stale synced tooth replaces it without errors', () async {
+    await store.linkToCloud('cloud', 'pc');
+    await store.insertSynced([remote('a', 'M2')]);
+    await store.applyRemote(remote('b', 'M2'));
+    expect((await store.entriesInGroup(1)).map((e) => e.id), ['b']);
+  });
 }

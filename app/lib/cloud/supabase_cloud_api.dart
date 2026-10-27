@@ -143,9 +143,11 @@ class SupabaseCloudApi implements CloudApi {
           'e': entryToJson(e),
           'base_version': baseVersion,
         }));
-        return r['status'] == 'ok'
-            ? PushOk((r['version'] as num).toInt())
-            : PushConflict(entryFromJson(_map(r['row'])));
+        return switch (r['status']) {
+          'ok' => PushOk((r['version'] as num).toInt()),
+          'duplicate' => PushDuplicate(entryFromJson(_map(r['row']))),
+          _ => PushConflict(entryFromJson(_map(r['row']))),
+        };
       });
 
   @override

@@ -64,6 +64,13 @@ class FakeCloudApi implements CloudApi {
     return result;
   }
 
+  static bool _sameElement(Entry a, Entry b) =>
+      a.data.elementId == b.data.elementId &&
+      a.data.dentition == b.data.dentition &&
+      a.data.toothType == b.data.toothType &&
+      a.data.jaw == b.data.jaw &&
+      a.data.side == b.data.side;
+
   static bool _sameContent(Entry a, Entry b) =>
       a.data.elementId == b.data.elementId &&
       a.data.dentition == b.data.dentition &&
@@ -175,6 +182,12 @@ class FakeCloudApi implements CloudApi {
     _checkWrite(db);
     await onPush?.call(e);
     final cur = server.rows[db]?[e.id]?.$1;
+    // Mirrors entries_one_element_per_id: one live row per element within a Ref ID.
+    if (!e.deleted) {
+      for (final x in server.entries(db)) {
+        if (x.id != e.id && !x.deleted && x.number == e.number && _sameElement(x, e)) return PushDuplicate(x);
+      }
+    }
     if (cur == null) {
       // A new row's number must come from a reserved block, or join an existing (shared) Ref ID.
       final joinsExisting = server.entries(db).any((x) => x.number == e.number);
