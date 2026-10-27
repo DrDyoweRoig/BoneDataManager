@@ -37,7 +37,8 @@ class LayerDefs extends Table {
 class Entries extends Table {
   TextColumn get id => text()();
   IntColumn get number => integer()();
-  TextColumn get refId => text().unique()();
+  // Not unique since v3: teeth of one specimen can share a Ref ID (see _oneElementPerId).
+  TextColumn get refId => text()();
   TextColumn get elementId => text()();
   TextColumn get dentition => text().nullable()();
   TextColumn get toothType => text().nullable()();
@@ -74,10 +75,19 @@ class LocalDb extends _$LocalDb {
   LocalDb(super.e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
+
+  /// v3: a Ref ID may be shared, but one element (tooth) appears once per ID among live rows.
+  static const _oneElementPerId = 'CREATE UNIQUE INDEX IF NOT EXISTS entries_one_element_per_id ON entries '
+      "(number, element_id, coalesce(dentition, ''), coalesce(tooth_type, ''), coalesce(jaw, ''), "
+      "coalesce(side, '')) WHERE deleted = 0";
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async {
+          await m.createAll();
+          await customStatement(_oneElementPerId);
+        },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
             for (final c in [meta.cloudId, meta.deviceId, meta.blockNext, meta.blockEnd, meta.lastPull]) {
@@ -86,6 +96,10 @@ class LocalDb extends _$LocalDb {
             await m.addColumn(entries, entries.syncState);
             await m.addColumn(entries, entries.baseVersion);
             await m.createTable(conflicts);
+          }
+          if (from < 3) {
+            await m.alterTable(TableMigration(entries)); // rebuild without UNIQUE(ref_id)
+            await customStatement(_oneElementPerId);
           }
         },
       );

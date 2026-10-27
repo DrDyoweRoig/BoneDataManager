@@ -953,7 +953,6 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
   );
   static const VerificationMeta _elementIdMeta = const VerificationMeta(
     'elementId',

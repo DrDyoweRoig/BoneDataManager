@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:uuid/uuid.dart';
 
+import '../catalog/catalog.dart';
 import '../common/enums.dart';
 import '../entries/entry.dart';
 import '../entries/entry_json.dart';
@@ -21,6 +22,24 @@ class NoNumbersLeft implements Exception {
   @override
   String toString() => 'No reserved numbers left on this computer. Connect to the internet to add more entries.';
 }
+
+/// Adding a tooth to a shared Ref ID that already has it.
+class ToothAlreadyInGroup implements Exception {
+  ToothAlreadyInGroup(this.tooth, this.refId);
+  final String tooth;
+  final String refId;
+
+  @override
+  String toString() => '$tooth is already in $refId';
+}
+
+/// "M1 · Lower · Left" (or the bone name) — how a member of a shared Ref ID is named to the user.
+String elementLabel(EntryDraft d) => d.elementId == kTeethId
+    ? [d.toothType, d.jaw?.label, d.side?.label].whereType<String>().join(' · ')
+    : [elementName(d), d.side?.label].whereType<String>().join(' · ');
+
+String _elementKey(EntryDraft d) =>
+    [d.elementId, d.dentition?.name, d.toothType, d.jaw?.name, d.side?.name].map((v) => v ?? '').join('|');
 
 /// One database = one SQLite file holding its definition, layers and entries.
 /// A cloud-linked store also tracks pending (not yet uploaded) changes, its reserved number block
@@ -115,7 +134,8 @@ class LocalStore implements EntryWriter {
   }
 
   @override
-  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer, {List<String>? ids}) async {
+  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer,
+      {List<String>? ids, bool sharedId = false}) async {
     final now = _now();
     final created = <Entry>[];
     await _db.transaction(() async {
@@ -125,8 +145,9 @@ class LocalStore implements EntryWriter {
         if (ids != null) row = row.copyWith(id: ids[i]);
         await _db.into(_db.entries).insert(row);
         created.add(_toEntry(row));
-        n++;
+        if (!sharedId) n++;
       }
+      if (sharedId && drafts.isNotEmpty) n++;
       await _db.update(_db.meta).write(MetaCompanion(nextNumber: Value(n)));
       _nextNumber = n;
     });
@@ -191,9 +212,11 @@ class LocalStore implements EntryWriter {
 
   /// Offline creation: numbers come from this computer's block. All or nothing.
   /// [ids] reuse the ids of an online attempt whose answer was lost, so the server can match them.
-  Future<List<Entry>> createEntriesFromBlock(List<EntryDraft> drafts, String observer, {List<String>? ids}) async {
+  Future<List<Entry>> createEntriesFromBlock(List<EntryDraft> drafts, String observer,
+      {List<String>? ids, bool sharedId = false}) async {
     final b = _block;
-    if (b == null || b.next + drafts.length - 1 > b.end) throw NoNumbersLeft();
+    final needed = sharedId ? 1 : drafts.length;
+    if (b == null || b.next + needed - 1 > b.end) throw NoNumbersLeft();
     final now = _now();
     final created = <Entry>[];
     await _db.transaction(() async {
@@ -204,10 +227,40 @@ class LocalStore implements EntryWriter {
         if (ids != null) row = row.copyWith(id: ids[i]);
         await _db.into(_db.entries).insert(row);
         created.add(_toEntry(row));
-        n++;
+        if (!sharedId) n++;
       }
+      if (sharedId && drafts.isNotEmpty) n++;
       await _db.update(_db.meta).write(MetaCompanion(blockNext: Value(n)));
       _block = (next: n, end: b.end);
+    });
+    return created;
+  }
+
+  /// Live rows sharing Ref ID number [number], in the order they were added.
+  Future<List<Entry>> entriesInGroup(int number) async => (await (_db.select(_db.entries)
+            ..where((e) => e.number.equals(number) & e.deleted.equals(false))
+            ..orderBy([(e) => OrderingTerm(expression: e.rowId)]))
+          .get())
+      .map(_toEntry)
+      .toList();
+
+  /// New rows under an existing Ref ID (no number is used). All or nothing; a tooth already in the
+  /// ID throws [ToothAlreadyInGroup]. Pending for cloud copies, like any local change.
+  Future<List<Entry>> addToGroup(String refId, int number, List<EntryDraft> drafts, String observer,
+      {List<String>? ids}) async {
+    final now = _now();
+    final created = <Entry>[];
+    await _db.transaction(() async {
+      final taken = {for (final e in await entriesInGroup(number)) _elementKey(e.data)};
+      for (var i = 0; i < drafts.length; i++) {
+        final d = drafts[i];
+        if (!taken.add(_elementKey(d))) throw ToothAlreadyInGroup(elementLabel(d), refId);
+        var row = _rowFor(d, number, observer, now).copyWith(
+            refId: refId, syncState: _cloudId == null ? 'synced' : 'pending');
+        if (ids != null) row = row.copyWith(id: ids[i]);
+        await _db.into(_db.entries).insert(row);
+        created.add(_toEntry(row));
+      }
     });
     return created;
   }

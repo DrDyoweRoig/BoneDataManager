@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/data/local_store.dart';
+import 'package:bone_data_manager/entries/entry.dart';
 import 'package:drift/backends.dart';
 import 'package:drift/drift.dart' show OpeningDetails;
 import 'package:drift/native.dart';
@@ -54,6 +56,11 @@ void main() {
     expect((await s.allEntries()).map((e) => e.refId), ['MAS-0001', 'MAS-0002']);
     expect(await s.pendingEntries(), isEmpty);
     expect((await s.createEntries([(await s.allEntries()).first.data], 'AP')).single.refId, 'MAS-0003');
+    final shared = await s.createEntries(
+        [const EntryDraft(elementId: 'femur', side: Side.left), const EntryDraft(elementId: 'femur', side: Side.right)],
+        'AP',
+        sharedId: true);
+    expect(shared.map((e) => e.refId), ['MAS-0004', 'MAS-0004']); // Ref ID no longer unique per row
     await s.close();
     await tmp.delete(recursive: true);
   });
