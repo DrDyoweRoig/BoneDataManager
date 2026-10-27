@@ -10,6 +10,7 @@ class SelectChips<T> extends StatelessWidget {
     required this.selected,
     required this.onChanged,
     this.multi = true,
+    this.keyPrefix,
   });
 
   final List<T> values;
@@ -17,6 +18,9 @@ class SelectChips<T> extends StatelessWidget {
   final Set<T> selected;
   final ValueChanged<Set<T>> onChanged;
   final bool multi;
+
+  /// Gives each button the key `<keyPrefix>-<label in lower case>` (for tests).
+  final String? keyPrefix;
 
   void _tap(T v) {
     final on = selected.contains(v);
@@ -38,6 +42,7 @@ class SelectChips<T> extends StatelessWidget {
           () {
             final on = selected.contains(v);
             return Material(
+              key: keyPrefix == null ? null : Key('$keyPrefix-${label(v).toLowerCase()}'),
               color: on ? scheme.primary : scheme.surface,
               shape: StadiumBorder(side: BorderSide(color: on ? scheme.primary : scheme.outline)),
               clipBehavior: Clip.antiAlias,

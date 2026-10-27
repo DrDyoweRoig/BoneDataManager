@@ -18,9 +18,13 @@ enum _Mode { bone, teeth }
 /// New entry (one bone, or several teeth at once) or edit of an existing [entry].
 /// Pops `true` after saving.
 class EntryFormScreen extends StatefulWidget {
-  const EntryFormScreen({super.key, required this.store, required this.observer, this.entry, this.writer});
+  const EntryFormScreen(
+      {super.key, required this.store, required this.observer, this.entry, this.writer, this.addTo});
 
   final LocalStore store;
+
+  /// "Add teeth to (Ref ID)": new teeth join this entry's Ref ID instead of getting new ones.
+  final Entry? addTo;
 
   /// Where saves go; the sync engine for cloud databases. Defaults to [store].
   final EntryWriter? writer;
@@ -53,13 +57,22 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
   String? _error;
   bool _saving = false;
 
+  /// "Give all selected teeth the same Ref ID?"
+  bool _sharedId = false;
+
   bool get _editing => widget.entry != null;
+  bool get _adding => widget.addTo != null;
 
   @override
   void initState() {
     super.initState();
     final d = widget.entry?.data;
     _values = {...?d?.values};
+    if (_adding) {
+      _mode = _Mode.teeth;
+      _dentition = widget.addTo!.data.dentition ?? Dentition.permanent;
+      return;
+    }
     if (d == null) {
       _mode = _bones.isEmpty ? _Mode.teeth : _Mode.bone;
       return;
@@ -142,15 +155,25 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     setState(() => _saving = true);
     try {
       final writer = widget.writer ?? widget.store;
+      while (_newIds.length < drafts.length) {
+        _newIds.add(const Uuid().v4());
+      }
+      final ids = _newIds.sublist(0, drafts.length);
       if (_editing) {
         await writer.updateEntry(widget.entry!.id, drafts.single, widget.observer);
+      } else if (_adding) {
+        await writer.addToGroup(widget.addTo!.refId, widget.addTo!.number, drafts, widget.observer, ids: ids);
       } else {
-        while (_newIds.length < drafts.length) {
-          _newIds.add(const Uuid().v4());
-        }
-        await writer.createEntries(drafts, widget.observer, ids: _newIds.sublist(0, drafts.length));
+        await writer.createEntries(drafts, widget.observer, ids: ids, sharedId: _sharedId && drafts.length > 1);
       }
       if (mounted) Navigator.of(context).pop(true);
+    } on ToothAlreadyInGroup catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = e.toString();
+        });
+      }
     } on NeedsConnection catch (e) {
       if (e.keptOnDevice && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
@@ -192,14 +215,19 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
 
     final teeth = _mode == _Mode.teeth ? _teeth : const <ToothSpec>[];
     return Scaffold(
-      appBar: AppBar(title: Text(_editing ? 'Edit ${widget.entry!.refId}' : 'New entry')),
+      appBar: AppBar(
+          title: Text(_editing
+              ? 'Edit ${widget.entry!.refId}'
+              : _adding
+                  ? 'Add teeth to ${widget.addTo!.refId}'
+                  : 'New entry')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 820),
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
-              if (!_editing && _hasTeeth && _bones.isNotEmpty)
+              if (!_editing && !_adding && _hasTeeth && _bones.isNotEmpty)
                 section(
                     'Element',
                     SelectChips<_Mode>(
@@ -235,7 +263,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
                 key: const Key('entry-save'),
                 onPressed: _saving ? null : _save,
                 icon: const Icon(Icons.check),
-                label: Text(_editing ? 'Save' : (teeth.length > 1 ? 'Save ${teeth.length} entries' : 'Save')),
+                label: Text(_editing || teeth.length < 2 ? 'Save' : 'Save ${teeth.length} entries'),
                 style: FilledButton.styleFrom(minimumSize: const Size(140, 48)),
               ),
             ]),
@@ -328,25 +356,63 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
               selected: _types,
               multi: multi,
               onChanged: (s) => _change(() => _types = s))),
-      if (!_editing)
-        Card.filled(
-          margin: const EdgeInsets.only(bottom: 20),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                  teeth.isEmpty
-                      ? 'Select jaw, side and tooth type'
-                      : '${teeth.length} ${teeth.length == 1 ? 'entry' : 'entries'} will be created',
-                  style: theme.textTheme.titleSmall),
-              for (var i = 0; i < teeth.length; i++)
-                Text(
-                    '${formatRefId(def.prefix, def.digits, next + i)} · ${teeth[i].type} · ${teeth[i].jaw.label} · ${teeth[i].side.label}',
-                    style: theme.textTheme.bodyMedium?.copyWith(fontFamily: 'monospace')),
-            ]),
+      if (!_editing && !_adding && teeth.length > 1)
+        section(
+            'Give all selected teeth the same Ref ID?',
+            SelectChips<bool>(
+              values: const [false, true],
+              label: (b) => b ? 'Yes' : 'No',
+              keyPrefix: 'shared',
+              selected: {_sharedId},
+              multi: false,
+              onChanged: (s) => _change(() => _sharedId = s.isNotEmpty && s.single),
+            )),
+      if (!_editing) _preview(theme, teeth, next, def.prefix, def.digits),
+      if (_editing && widget.entry!.data.elementId == kTeethId)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.add),
+            label: Text('Add teeth to ${widget.entry!.refId}'),
+            onPressed: () async {
+              final added = await Navigator.of(context).push<bool>(MaterialPageRoute(
+                  builder: (_) => EntryFormScreen(
+                      store: widget.store, writer: widget.writer, observer: widget.observer, addTo: widget.entry)));
+              if (added == true && mounted) Navigator.of(context).pop(true);
+            },
           ),
         ),
     ];
+  }
+
+  /// What Save will create: Ref IDs and teeth.
+  Widget _preview(ThemeData theme, List<ToothSpec> teeth, int next, String prefix, int digits) {
+    final shared = _adding || (_sharedId && teeth.length > 1);
+    final sharedRef = _adding ? widget.addTo!.refId : formatRefId(prefix, digits, next);
+    final String title;
+    if (teeth.isEmpty) {
+      title = 'Select jaw, side and tooth type';
+    } else if (_adding) {
+      title = '${teeth.length} ${teeth.length == 1 ? 'tooth' : 'teeth'} will be added to $sharedRef';
+    } else if (shared) {
+      title = '${teeth.length} entries will be created, all with Ref ID $sharedRef';
+    } else {
+      title = '${teeth.length} ${teeth.length == 1 ? 'entry' : 'entries'} will be created';
+    }
+    return Card.filled(
+      margin: const EdgeInsets.only(bottom: 20),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: theme.textTheme.titleSmall),
+          for (var i = 0; i < teeth.length; i++)
+            Text(
+                '${shared ? sharedRef : formatRefId(prefix, digits, next + i)} · '
+                '${teeth[i].type} · ${teeth[i].jaw.label} · ${teeth[i].side.label}',
+                style: theme.textTheme.bodyMedium?.copyWith(fontFamily: 'monospace')),
+        ]),
+      ),
+    );
   }
 
   Widget _layerField(Layer l) {

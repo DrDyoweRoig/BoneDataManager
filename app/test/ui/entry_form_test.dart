@@ -178,4 +178,72 @@ void main() {
     await _save(tester);
     expect((await tester.runAsync(store.allEntries))!.single.data.side, Side.unknown);
   });
+
+  group('shared Ref ID', () {
+    testWidgets('one tooth: no question', (tester) async {
+      await _pump(tester, _def());
+      await _tap(tester, 'Teeth');
+      for (final t in ['Lower', 'Left', 'M1']) {
+        await _tap(tester, t);
+      }
+      expect(find.text('Give all selected teeth the same Ref ID?'), findsNothing);
+    });
+
+    testWidgets('Yes gives every selected tooth the same Ref ID', (tester) async {
+      final store = await _pump(tester, _def());
+      await _tap(tester, 'Teeth');
+      for (final t in ['Lower', 'Left', 'M1', 'M2', 'M3']) {
+        await _tap(tester, t);
+      }
+      expect(find.text('Give all selected teeth the same Ref ID?'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('shared-yes')));
+      await tester.pumpAndSettle();
+      expect(find.text('3 entries will be created, all with Ref ID MAS-0001'), findsOneWidget);
+      await _save(tester);
+      final all = (await tester.runAsync(store.allEntries))!;
+      expect(all.map((e) => '${e.refId} ${e.data.toothType}'), ['MAS-0001 M1', 'MAS-0001 M2', 'MAS-0001 M3']);
+    });
+
+    Future<LocalStore> pumpAddTo(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final (store, entry) = (await tester.runAsync(() async {
+        final s = await LocalStore.inMemory(_def());
+        final made = await s.createEntries([
+          const EntryDraft(
+              elementId: kTeethId, dentition: Dentition.permanent, toothType: 'M1', jaw: Jaw.lower, side: Side.left),
+        ], 'AP');
+        return (s, made.single);
+      }))!;
+      addTearDown(() => tester.runAsync(store.close));
+      await tester.pumpWidget(MaterialApp(
+          theme: buildTheme(Brightness.light), home: EntryFormScreen(store: store, observer: 'AP', entry: entry)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add teeth to MAS-0001'));
+      await tester.pumpAndSettle();
+      return store;
+    }
+
+    testWidgets('editing a tooth offers to add teeth to its Ref ID', (tester) async {
+      final store = await pumpAddTo(tester);
+      for (final t in ['Lower', 'Left', 'M2']) {
+        await _tap(tester, t);
+      }
+      expect(find.text('1 tooth will be added to MAS-0001'), findsOneWidget);
+      await _save(tester);
+      final all = (await tester.runAsync(store.allEntries))!;
+      expect(all.map((e) => '${e.refId} ${e.data.toothType}'), ['MAS-0001 M1', 'MAS-0001 M2']);
+    });
+
+    testWidgets('a tooth already in the Ref ID is refused', (tester) async {
+      final store = await pumpAddTo(tester);
+      for (final t in ['Lower', 'Left', 'M1']) {
+        await _tap(tester, t);
+      }
+      await _save(tester);
+      expect(find.text('M1 · Lower · Left is already in MAS-0001'), findsOneWidget);
+      expect((await tester.runAsync(store.allEntries))!.length, 1);
+    });
+  });
 }
