@@ -222,3 +222,10 @@ Els permisos s'apliquen al servidor (Row Level Security de Supabase), no només 
 - **Dades:** còpia local interna (a la carpeta privada de l'app, sense preguntar) només per llegir i navegar; **desar sempre requereix connexió** (spec §10). Sense connexió: franja *"You're offline. You can browse, but saving needs a connection."* i Save respon *"You're offline. Saving needs a connection."*; mai s'usen blocs de números al mòbil.
 - **Disseny:** llista d'entrades com a **targetes** (Ref ID gran; element · dent/jaw/side; primers valors de layers); botó flotant *New entry*; el formulari és el mateix (botons grans, scroll, Save fix).
 - **Distribució:** fitxer **APK** instal·lat directament als mòbils (sense Google Play de moment). Publicar a Google Play queda fora d'abast.
+
+## 18. Ref ID compartit per a dents (acordat 2026-10-27)
+
+- En crear diverses dents alhora: *"Give all selected teeth the same Ref ID?"* No (per defecte) / Yes. Amb Yes, totes les dents reben **el mateix Ref ID** (un sol número del comptador o del bloc); una fila per dent.
+- En editar una dent: **"Add teeth to <Ref ID>"** afegeix dents noves amb el mateix Ref ID. Una dent (Dentition + Tooth type + Jaw + Side) no pot repetir-se dins d'un mateix ID mentre no estigui esborrada: *"M1 · Lower · Left is already in PN-0007"*.
+- Regla nova de dades: el Ref ID ja **no** és únic per fila; és únic el conjunt (número, element, dentició, tipus de dent, maxil·lar, costat) entre files no esborrades. Els números mai es reutilitzen.
+- Funciona en local, núvol, escriptori sense connexió i mòbil (amb connexió). Només per a dents.
