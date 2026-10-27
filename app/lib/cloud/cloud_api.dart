@@ -58,7 +58,7 @@ abstract class CloudApi {
   /// Online creation: the server assigns consecutive numbers. [ids] are chosen by the client so a
   /// retry after a lost response returns the same rows instead of creating new ones.
   Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
-      {required List<String> ids});
+      {required List<String> ids, bool sharedId = false});
   Future<({int start, int end})> reserveBlock(String db, String device, int size);
   Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion});
 

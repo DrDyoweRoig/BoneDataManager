@@ -116,7 +116,7 @@ class SupabaseCloudApi implements CloudApi {
 
   @override
   Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
-          {required List<String> ids}) =>
+          {required List<String> ids, bool sharedId = false}) =>
       _call(() async {
         final rows = await client.rpc('create_entries', params: {
           'db': db,
@@ -124,6 +124,7 @@ class SupabaseCloudApi implements CloudApi {
             for (var i = 0; i < drafts.length; i++) {...draftToJson(drafts[i]), 'id': ids[i]}
           ],
           'observer': observer,
+          'shared': sharedId,
         }) as List;
         return [for (final r in rows) entryFromJson(_map(r))]..sort((a, b) => a.number.compareTo(b.number));
       });

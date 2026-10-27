@@ -246,6 +246,7 @@ class LocalStore implements EntryWriter {
 
   /// New rows under an existing Ref ID (no number is used). All or nothing; a tooth already in the
   /// ID throws [ToothAlreadyInGroup]. Pending for cloud copies, like any local change.
+  @override
   Future<List<Entry>> addToGroup(String refId, int number, List<EntryDraft> drafts, String observer,
       {List<String>? ids}) async {
     final now = _now();

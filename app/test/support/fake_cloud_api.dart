@@ -130,7 +130,7 @@ class FakeCloudApi implements CloudApi {
 
   @override
   Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
-      {required List<String> ids}) async {
+      {required List<String> ids, bool sharedId = false}) async {
     _checkWrite(db);
     // Retry of a call whose response was lost: return what was created.
     if (ids.every((id) => server.rows[db]?.containsKey(id) ?? false)) {
@@ -138,7 +138,7 @@ class FakeCloudApi implements CloudApi {
     }
     final def = server.defs[db]!;
     var n = server.nextNumber[db]!;
-    server.nextNumber[db] = n + drafts.length;
+    server.nextNumber[db] = n + (sharedId ? 1 : drafts.length);
     final now = DateTime.now().toUtc();
     var i = 0;
     return _respond([
@@ -147,7 +147,7 @@ class FakeCloudApi implements CloudApi {
           final e = Entry(
               id: ids[i++],
               number: n,
-              refId: formatRefId(def.prefix, def.digits, n++),
+              refId: formatRefId(def.prefix, def.digits, sharedId ? n : n++),
               data: d,
               createdBy: observer,
               createdAt: now,
@@ -176,7 +176,9 @@ class FakeCloudApi implements CloudApi {
     await onPush?.call(e);
     final cur = server.rows[db]?[e.id]?.$1;
     if (cur == null) {
-      if (!(server.blocks[db] ?? []).any((b) => e.number >= b.start && e.number <= b.end)) {
+      // A new row's number must come from a reserved block, or join an existing (shared) Ref ID.
+      final joinsExisting = server.entries(db).any((x) => x.number == e.number);
+      if (!joinsExisting && !(server.blocks[db] ?? []).any((b) => e.number >= b.start && e.number <= b.end)) {
         throw StateError('Number ${e.number} was not reserved for offline use');
       }
       server._put(db, _with(e, version: 1));

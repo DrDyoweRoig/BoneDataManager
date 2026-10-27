@@ -355,4 +355,68 @@ void main() {
           "You're offline. The change is kept on this phone and will upload when you're back online.");
     });
   });
+
+  group('shared Ref IDs', () {
+    const m1 = EntryDraft(elementId: 'femur', side: Side.left); // stand-ins: any two different elements
+    const m2 = EntryDraft(elementId: 'femur', side: Side.right);
+
+    test('online: the server gives one number to the whole selection', () async {
+      final (engine, store, _) = await computer('pc-a');
+      final made = await engine.createEntries([m1, m2], 'AP', sharedId: true);
+      expect(made.map((e) => e.refId), ['MAS-0051', 'MAS-0051']);
+      expect(server.entries('db1').map((e) => e.refId), ['MAS-0051', 'MAS-0051']);
+      expect(server.nextNumber['db1'], 52);
+      expect((await store.allEntries()).length, 2);
+    });
+
+    test('offline: one block number, uploaded when back online', () async {
+      final (engine, _, api) = await computer('pc-a');
+      api.online = false;
+      final made = await engine.createEntries([m1, m2], 'AP', sharedId: true);
+      expect(made.map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      api.online = true;
+      await engine.syncNow();
+      expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+    });
+
+    test('adding to an ID offline uploads later under the same number', () async {
+      final (engine, store, api) = await computer('pc-a');
+      final first = (await engine.createEntries([m1], 'AP')).single;
+      api.online = false;
+      await engine.addToGroup(first.refId, first.number, [m2], 'AP');
+      api.online = true;
+      await engine.syncNow();
+      expect(server.entries('db1').map((e) => '${e.refId} ${e.data.side!.label}'),
+          ['MAS-0051 Left', 'MAS-0051 Right']);
+      expect(await store.pendingEntries(), isEmpty);
+    });
+
+    test('phone: adding to an ID needs a connection', () async {
+      final api = FakeCloudApi(server);
+      final store = await LocalStore.inMemory(def);
+      await store.linkToCloud('db1', 'phone');
+      final engine = SyncEngine(store, api, allowOffline: false);
+      cleanup.add(() async {
+        await engine.dispose();
+        await store.close();
+      });
+      final first = (await engine.createEntries([m1], 'AP')).single;
+      api.online = false;
+      await expectLater(engine.addToGroup(first.refId, first.number, [m2], 'AP'), throwsA(isA<NeedsConnection>()));
+      expect((await store.allEntries()).length, 1);
+      api.online = true;
+      await engine.addToGroup(first.refId, first.number, [m2], 'AP');
+      expect(server.entries('db1').length, 2);
+    });
+  });
+
+  test('a sync requested during a running round waits for a round that includes its change', () async {
+    final (engine, store, api) = await computer('pc-a');
+    final e = (await engine.createEntries([left], 'AP')).single;
+    final first = engine.syncNow(); // round in flight
+    await store.updateEntry(e.id, right, 'AP');
+    await engine.syncNow(); // must not return with the old round
+    expect(server.entries('db1').single.data.side, Side.right);
+    await first;
+  });
 }

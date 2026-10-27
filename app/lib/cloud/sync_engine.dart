@@ -78,7 +78,9 @@ class SyncEngine implements EntryWriter {
   Timer? _timer;
   bool _offline = false;
   Future<void>? _running;
-  bool _again = false;
+
+  /// Callers that asked while a round was running; they wait for the next round, not the old one.
+  Completer<void>? _followUp;
   bool _disposed = false;
 
   /// Called when the definition (layers, names…) was changed from another computer.
@@ -128,11 +130,12 @@ class SyncEngine implements EntryWriter {
   }
 
   @override
-  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer, {List<String>? ids}) async {
+  Future<List<Entry>> createEntries(List<EntryDraft> drafts, String observer,
+      {List<String>? ids, bool sharedId = false}) async {
     ids ??= [for (final _ in drafts) const Uuid().v4()];
     if (!allowOffline) {
       try {
-        final made = await api.createEntries(_db, drafts, observer, ids: ids);
+        final made = await api.createEntries(_db, drafts, observer, ids: ids, sharedId: sharedId);
         await store.insertSynced(made);
         await _publish();
         return made;
@@ -144,7 +147,7 @@ class SyncEngine implements EntryWriter {
     }
     if (!_offline) {
       try {
-        final made = await api.createEntries(_db, drafts, observer, ids: ids);
+        final made = await api.createEntries(_db, drafts, observer, ids: ids, sharedId: sharedId);
         await store.insertSynced(made);
         await _publish();
         return made;
@@ -153,8 +156,24 @@ class SyncEngine implements EntryWriter {
       }
     }
     // Same ids: if the online attempt did reach the server, the upload matches it instead of duplicating.
-    final made = await store.createEntriesFromBlock(drafts, observer, ids: ids);
+    final made = await store.createEntriesFromBlock(drafts, observer, ids: ids, sharedId: sharedId);
     await _publish();
+    return made;
+  }
+
+  @override
+  Future<List<Entry>> addToGroup(String refId, int number, List<EntryDraft> drafts, String observer,
+      {List<String>? ids}) async {
+    if (!allowOffline) await _requireConnection();
+    final made = await store.addToGroup(refId, number, drafts, observer, ids: ids);
+    await _publish();
+    if (allowOffline) {
+      unawaited(syncNow());
+    } else {
+      for (final e in made) {
+        await _pushNow(e.id);
+      }
+    }
     return made;
   }
 
@@ -194,12 +213,13 @@ class SyncEngine implements EntryWriter {
     }
   }
 
-  /// One full round: definition, number block, push, pull. Calls made while running are merged.
+  /// One full round: definition, number block, push, pull. Calls made while a round runs are
+  /// merged into one follow-up round, and they complete only when that round has finished.
   Future<void> syncNow() async {
     if (_disposed) return;
     if (_running != null) {
-      _again = true;
-      return _running;
+      _followUp ??= Completer<void>();
+      return _followUp!.future;
     }
     final run = _round();
     _running = run;
@@ -208,9 +228,13 @@ class SyncEngine implements EntryWriter {
     } finally {
       _running = null;
     }
-    if (_again && !_disposed) {
-      _again = false;
-      await syncNow();
+    final waiting = _followUp;
+    _followUp = null;
+    if (waiting == null) return;
+    try {
+      if (!_disposed) await syncNow();
+    } finally {
+      waiting.complete();
     }
   }
 
