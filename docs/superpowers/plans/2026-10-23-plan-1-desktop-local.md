@@ -79,7 +79,7 @@ app/                                  Flutter project root
 **Files:** Create `app/` (via `flutter create`), `.gitignore`
 
 - [ ] **Step 1:** Install the Flutter SDK (stable) from flutter.dev and Visual Studio 2022 with the "Desktop development with C++" workload (needed for Windows builds). **Ask the user before downloading.** Verify: `flutter doctor` shows Flutter ✓ and Visual Studio ✓.
-- [ ] **Step 2:** In `C:\Users\alber\Desktop\datamanager`: `git init`, then `flutter create --platforms=windows --org com.bonedatamanager --project-name bone_data_manager app`.
+- [ ] **Step 2:** In the repository root: `git init`, then `flutter create --platforms=windows --org com.bonedatamanager --project-name bone_data_manager app`.
 - [ ] **Step 3:** In `app/`: `flutter pub add drift sqlite3_flutter_libs flutter_riverpod syncfusion_flutter_xlsio path_provider shared_preferences file_picker uuid intl path` and `flutter pub add --dev drift_dev build_runner excel`.
 - [ ] **Step 4:** Run `flutter test` (default counter test) → PASS; `flutter run -d windows` opens a window. Delete the counter test and demo code in `main.dart`.
 - [ ] **Step 5:** Commit `chore: scaffold Flutter desktop project`.
