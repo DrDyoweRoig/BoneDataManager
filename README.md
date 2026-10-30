@@ -1,5 +1,7 @@
 # Bone Data Manager
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23806069.svg)](https://doi.org/10.5281/zenodo.23806069)
+
 Desktop and Android app for recording osteological and dental observations — one row per bone or
 tooth, each with its own reference ID — and exporting them to Excel. Built for bioarchaeology and
 human osteology teams.
@@ -55,8 +57,13 @@ single setup script bundled in the app (`app/assets/supabase_setup.sql`).
 
 ## Cite
 
-If you use Bone Data Manager in research, please cite it — see [`CITATION.cff`](CITATION.cff)
-(GitHub's *Cite this repository* button gives APA and BibTeX).
+If you use Bone Data Manager in research, please cite it:
+
+> Dyowe Roig, A. E. (2026). *Bone Data Manager* (Version 1.0.0) [Computer software]. Zenodo.
+> https://doi.org/10.5281/zenodo.23806069
+
+The DOI above always points to the latest version; each release also has its own DOI on Zenodo.
+GitHub's *Cite this repository* button (from [`CITATION.cff`](CITATION.cff)) gives APA and BibTeX.
 
 ## License
 
