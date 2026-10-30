@@ -67,6 +67,9 @@ class RuntimeCloudNotifier extends Notifier<RuntimeCloud?> {
 
 final runtimeCloudProvider = NotifierProvider<RuntimeCloudNotifier, RuntimeCloud?>(RuntimeCloudNotifier.new);
 
+/// "Test connection" (replaceable in tests).
+final serverCheckProvider = Provider<Future<ServerCheck> Function(CloudConnection)>((ref) => checkServer);
+
 /// Sign-in for the active server, or null without one. Overridden in `main` for builds with a built-in server.
 final authServiceProvider = Provider<AuthService?>((ref) {
   final r = ref.watch(runtimeCloudProvider);
