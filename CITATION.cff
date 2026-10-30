@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Bone Data Manager"
+abstract: >-
+  Desktop and Android application for recording osteological and dental observations,
+  one row per bone or tooth with automatic reference IDs, custom fields and Excel export.
+  Optional team sync through each team's own Supabase server, with roles, offline work and
+  conflict resolution.
+authors:
+  - given-names: "Albert Epitíe"
+    family-names: "Dyowe Roig"
+    orcid: "https://orcid.org/0000-0002-2710-0816"
+    affiliation: "Universitat de Barcelona"
+version: "1.0.0"
+date-released: "2026-10-30"
+license: MIT
+repository-code: "https://github.com/DrDyoweRoig/BoneDataManager"
+keywords:
+  - osteology
+  - bioarchaeology
+  - dental anthropology
+  - human remains
+  - data recording
+  - Flutter
