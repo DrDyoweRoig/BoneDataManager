@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
 import 'cloud/auth_service.dart';
 import 'cloud/cloud_config.dart';
+import 'cloud/cloud_connection.dart';
 import 'cloud/move_to_cloud.dart';
 import 'cloud/supabase_cloud_api.dart';
 import 'common/platform.dart';
@@ -28,6 +29,18 @@ Future<void> main() async {
       authServiceProvider.overrideWithValue(SupabaseAuthService(client)),
       cloudApiProvider.overrideWithValue(SupabaseCloudApi(client)),
     ]);
+  } else {
+    // Builds without a built-in server: reconnect to the team server chosen in the app, if any.
+    final saved = await CloudConnectionStore().load();
+    RuntimeCloud? restored;
+    if (saved != null) {
+      try {
+        restored = RuntimeCloud(saved, await SupabaseStarter().start(saved));
+      } catch (_) {
+        // Bad saved settings must never stop the app from opening; the user can connect again.
+      }
+    }
+    overrides.add(runtimeCloudProvider.overrideWith(() => RuntimeCloudNotifier(restored)));
   }
   runApp(ProviderScope(overrides: overrides, child: const BoneDataManagerApp()));
 }

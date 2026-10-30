@@ -1,16 +1,83 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../cloud/auth_service.dart';
 import '../cloud/cloud_api.dart';
+import '../cloud/cloud_connection.dart';
+import '../cloud/supabase_cloud_api.dart';
 import '../cloud/sync_engine.dart';
 import '../common/platform.dart';
 import 'providers.dart';
 
-/// Null when the app was built without cloud configuration; overridden in `main` otherwise.
-final authServiceProvider = Provider<AuthService?>((ref) => null);
+/// Starts and stops the Supabase client for a team's own server (replaceable in tests).
+abstract class CloudStarter {
+  Future<SupabaseClient> start(CloudConnection c);
+  Future<void> stop();
+}
 
-/// Null when the app was built without cloud configuration; overridden in `main` otherwise.
-final cloudApiProvider = Provider<CloudApi?>((ref) => null);
+class SupabaseStarter implements CloudStarter {
+  @override
+  Future<SupabaseClient> start(CloudConnection c) async =>
+      (await Supabase.initialize(url: c.url, publishableKey: c.anonKey)).client;
+
+  @override
+  Future<void> stop() => Supabase.instance.dispose();
+}
+
+final cloudStarterProvider = Provider<CloudStarter>((ref) => SupabaseStarter());
+
+class RuntimeCloud {
+  const RuntimeCloud(this.connection, this.client);
+  final CloudConnection connection;
+  final SupabaseClient client;
+}
+
+/// The team server chosen in the app ("Connect to your cloud"). Only used by builds without a
+/// built-in server; builds with one override [authServiceProvider] and [cloudApiProvider] in main.
+class RuntimeCloudNotifier extends Notifier<RuntimeCloud?> {
+  RuntimeCloudNotifier([this._initial]);
+  final RuntimeCloud? _initial;
+
+  @override
+  RuntimeCloud? build() => _initial;
+
+  Future<void> connect(CloudConnection c) async {
+    final problem = validateConnection(c.url, c.anonKey);
+    if (problem != null) throw ArgumentError(problem);
+    await _stop();
+    final client = await ref.read(cloudStarterProvider).start(c);
+    await CloudConnectionStore().save(c);
+    state = RuntimeCloud(c, client);
+  }
+
+  /// Back to local-only: closes the open database (it may be a copy of this server's), signs out.
+  Future<void> disconnect() async {
+    if (state == null) return;
+    await ref.read(openStoreProvider.notifier).close();
+    await _stop();
+    await CloudConnectionStore().clear();
+  }
+
+  Future<void> _stop() async {
+    if (state == null) return;
+    state = null;
+    await ref.read(cloudStarterProvider).stop();
+  }
+}
+
+final runtimeCloudProvider = NotifierProvider<RuntimeCloudNotifier, RuntimeCloud?>(RuntimeCloudNotifier.new);
+
+/// Sign-in for the active server, or null without one. Overridden in `main` for builds with a built-in server.
+final authServiceProvider = Provider<AuthService?>((ref) {
+  final r = ref.watch(runtimeCloudProvider);
+  return r == null ? null : SupabaseAuthService(r.client);
+});
+
+/// Cloud calls for the active server, or null without one. Overridden in `main` for builds with a built-in server.
+final cloudApiProvider = Provider<CloudApi?>((ref) {
+  final r = ref.watch(runtimeCloudProvider);
+  return r == null ? null : SupabaseCloudApi(r.client);
+});
 
 /// The signed-in email, or null when signed out or without cloud.
 final signedInEmailProvider = StreamProvider<String?>((ref) async* {
