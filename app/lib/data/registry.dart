@@ -44,6 +44,16 @@ class Registry {
     await (await SharedPreferences.getInstance()).setString(_copiesKey, jsonEncode(m));
   }
 
+  static const _serversKey = 'cloud_servers';
+
+  /// Server URL a cloud copy belongs to (null for copies made before this was recorded).
+  Future<String?> serverFor(String cloudId) async => (await _map(_serversKey))[cloudId];
+
+  Future<void> rememberServer(String cloudId, String url) async {
+    final m = await _map(_serversKey)..[cloudId] = url;
+    await (await SharedPreferences.getInstance()).setString(_serversKey, jsonEncode(m));
+  }
+
   static const _rolesKey = 'cloud_roles';
 
   /// Last role seen for a cloud database, so the right buttons show while offline.

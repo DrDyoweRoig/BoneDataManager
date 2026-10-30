@@ -279,7 +279,9 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     // Keeps the sync engine of a cloud database alive while the workspace is open.
     final engine = ref.watch(syncEngineProvider);
     _watchEngine(engine);
-    final canEdit = (ref.watch(currentRoleProvider).value ?? 'viewer') != 'viewer';
+    final guard = ref.watch(copyGuardProvider);
+    final canEdit =
+        (ref.watch(currentRoleProvider).value ?? 'viewer') != 'viewer' && guard.hasValue && guard.value == null;
     // Structure changes (layers, names) also change the Excel file.
     ref.listen(openStoreProvider, (_, _) => _live?.schedule());
     final def = store.def;
@@ -370,6 +372,12 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (guard.value != null)
+                MaterialBanner(
+                  content: Text(guard.value!),
+                  leading: const Icon(Icons.lock_outline),
+                  actions: const [SizedBox.shrink()],
+                ),
               if (isMobile && engine != null)
                 ValueListenableBuilder<SyncStatus>(
                   valueListenable: engine.status,

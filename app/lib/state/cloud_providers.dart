@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../cloud/auth_service.dart';
 import '../cloud/cloud_api.dart';
+import '../cloud/cloud_config.dart';
 import '../cloud/cloud_connection.dart';
 import '../cloud/supabase_cloud_api.dart';
 import '../cloud/sync_engine.dart';
@@ -17,11 +18,24 @@ abstract class CloudStarter {
 
 class SupabaseStarter implements CloudStarter {
   @override
-  Future<SupabaseClient> start(CloudConnection c) async =>
-      (await Supabase.initialize(url: c.url, publishableKey: c.anonKey)).client;
+  Future<SupabaseClient> start(CloudConnection c) async {
+    // initialize() silently returns the previous client if one is still up.
+    if (Supabase.instance.isInitialized) await Supabase.instance.dispose();
+    final s = await Supabase.initialize(
+      url: c.url,
+      publishableKey: c.anonKey,
+      // One saved session per full host, so a session can never be sent to another server.
+      authOptions: FlutterAuthClientOptions(
+        localStorage: SharedPreferencesLocalStorage(persistSessionKey: 'bdm-${Uri.parse(c.url).host}-auth-token'),
+      ),
+    );
+    return s.client;
+  }
 
   @override
-  Future<void> stop() => Supabase.instance.dispose();
+  Future<void> stop() async {
+    if (Supabase.instance.isInitialized) await Supabase.instance.dispose();
+  }
 }
 
 final cloudStarterProvider = Provider<CloudStarter>((ref) => SupabaseStarter());
@@ -50,12 +64,26 @@ class RuntimeCloudNotifier extends Notifier<RuntimeCloud?> {
     state = RuntimeCloud(c, client);
   }
 
-  /// Back to local-only: closes the open database (it may be a copy of this server's), signs out.
+  /// Back to local-only: closes the open database (it may be a copy of this server's), signs this
+  /// device out and forgets the server — even if stopping the client fails.
   Future<void> disconnect() async {
     if (state == null) return;
-    await ref.read(openStoreProvider.notifier).close();
-    await _stop();
-    await CloudConnectionStore().clear();
+    try {
+      await ref.read(openStoreProvider.notifier).close();
+      try {
+        await state?.client.auth.signOut(scope: SignOutScope.local);
+      } catch (_) {
+        // Offline or already signed out: nothing to undo.
+      }
+      try {
+        await _stop();
+      } catch (_) {
+        // A client that won't stop cleanly must not keep this device connected.
+      }
+    } finally {
+      state = null;
+      await CloudConnectionStore().clear();
+    }
   }
 
   Future<void> _stop() async {
@@ -66,6 +94,30 @@ class RuntimeCloudNotifier extends Notifier<RuntimeCloud?> {
 }
 
 final runtimeCloudProvider = NotifierProvider<RuntimeCloudNotifier, RuntimeCloud?>(RuntimeCloudNotifier.new);
+
+/// URL of the server this app talks to: the built-in one, the one chosen in the app, or none.
+final activeServerUrlProvider = Provider<String?>(
+  (ref) => isCloudConfigured ? kSupabaseUrl : ref.watch(runtimeCloudProvider)?.connection.url,
+);
+
+/// Why the open database must stay read-only, or null. A cloud copy is only editable through its own
+/// server: without it, new entries would never upload and would reuse other devices' numbers.
+final copyGuardProvider = FutureProvider<String?>((ref) async {
+  final cloudId = ref.watch(openStoreProvider.select((s) => s?.cloudId));
+  if (cloudId == null) return null;
+  if (ref.watch(cloudApiProvider) == null) {
+    return "This is a copy of a cloud database. Connect to your team's server to edit it.";
+  }
+  final active = ref.watch(activeServerUrlProvider);
+  final recorded = await ref.read(registryProvider).serverFor(cloudId);
+  if (active != null && recorded != null && normalizeUrl(active) != normalizeUrl(recorded)) {
+    return 'This database belongs to ${Uri.parse(recorded).host}. Connect to that server to edit it.';
+  }
+  return null;
+});
+
+/// Set in main when the saved team server could not be restored at start-up.
+final cloudRestoreProblemProvider = Provider<String?>((ref) => null);
 
 /// "Test connection" (replaceable in tests).
 final serverCheckProvider = Provider<Future<ServerCheck> Function(CloudConnection)>((ref) => checkServer);

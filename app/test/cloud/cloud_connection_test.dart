@@ -41,6 +41,10 @@ void main() {
     test('rejects anything else', () {
       expect(() => decodeConnectionCode('hello'), throwsFormatException);
       expect(() => decodeConnectionCode('BDM1.!!!'), throwsFormatException);
+      for (final payload in ['5', 'null', '[]', '{"u":5,"k":"x"}']) {
+        final code = 'BDM1.${base64Url.encode(utf8.encode(payload)).replaceAll('=', '')}';
+        expect(() => decodeConnectionCode(code), throwsFormatException, reason: payload);
+      }
     });
     test('never carries a secret key', () {
       expect(() => decodeConnectionCode(encodeConnectionCode(const CloudConnection(

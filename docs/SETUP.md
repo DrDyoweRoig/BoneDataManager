@@ -79,8 +79,28 @@ Then the admin adds each person to a database from **Members** (owner, editor or
 
 ## Disconnecting
 
-**Cloud settings → Disconnect** returns that device to local databases. Nothing is deleted on
-the server. Copies of cloud databases already on the device stay as files.
+**Cloud settings → Disconnect** signs the device out and returns it to local databases. Nothing is
+deleted on the server. Copies of cloud databases already on the device stay as files but open
+**read-only** until you connect to their server again (otherwise new entries could never be
+uploaded and would reuse other devices' numbers).
+
+## Updating an existing server
+
+When a new version of the app needs a newer server setup, *Test connection* says
+*"The server was set up with an older version"*. Each release notes which SQL to run. For servers
+set up before connection codes existed (schema 2), run this once in **SQL Editor**:
+
+```sql
+create or replace function public.app_schema_version() returns int
+language sql immutable as $$ select 3 $$;
+grant execute on function public.app_schema_version() to anon, authenticated;
+```
+
+## Requirements and limits
+
+- The server must be reachable over **https** (Supabase projects always are). Plain `http://`
+  addresses are refused to keep passwords and data encrypted in transit.
+- The app only ever stores the **public** key. The secret / service_role key is refused.
 
 ## For developers
 

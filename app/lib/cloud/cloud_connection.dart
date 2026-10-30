@@ -67,6 +67,7 @@ CloudConnection decodeConnectionCode(String code) {
   if (!c.startsWith(_codePrefix)) throw notACode;
   try {
     final j = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(c.substring(_codePrefix.length)))));
+    if (j is! Map || j['u'] is! String || j['k'] is! String) throw notACode;
     final conn = CloudConnection(url: normalizeUrl(j['u'] as String), anonKey: (j['k'] as String).trim());
     if (validateConnection(conn.url, conn.anonKey) != null) throw notACode;
     return conn;

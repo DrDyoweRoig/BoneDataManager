@@ -47,7 +47,12 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       _error = null;
       _check = null;
     });
-    final r = await ref.read(serverCheckProvider)(_typed);
+    ServerCheck r;
+    try {
+      r = await ref.read(serverCheckProvider)(_typed);
+    } catch (_) {
+      r = const ServerCheck(ServerState.unreachable);
+    }
     if (mounted) {
       setState(() {
         _busy = false;
@@ -64,7 +69,12 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       _error = null;
     });
     final c = _typed;
-    final check = await ref.read(serverCheckProvider)(c);
+    ServerCheck check;
+    try {
+      check = await ref.read(serverCheckProvider)(c);
+    } catch (_) {
+      check = const ServerCheck(ServerState.unreachable);
+    }
     if (!mounted) return;
     if (check.state != ServerState.ready) {
       return setState(() {

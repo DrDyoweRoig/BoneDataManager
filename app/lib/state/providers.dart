@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../data/local_store.dart';
 import '../data/registry.dart';
+import 'cloud_providers.dart';
 
 final registryProvider = Provider<Registry>((ref) => Registry());
 
@@ -36,6 +37,12 @@ class OpenStoreNotifier extends Notifier<LocalStore?> {
   Future<void> set(Future<LocalStore> opening) async {
     final store = await opening;
     await _closeCurrent();
+    // First time a cloud copy is opened with a server, remember which server it belongs to.
+    final cloudId = store.cloudId;
+    final active = ref.read(activeServerUrlProvider);
+    if (cloudId != null && active != null && await ref.read(registryProvider).serverFor(cloudId) == null) {
+      await ref.read(registryProvider).rememberServer(cloudId, active);
+    }
     state = store;
     if (store.file != null) {
       await ref.read(registryProvider).remember(store.file!.path, store.def.name);

@@ -10,15 +10,21 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FakeStarter implements CloudStarter {
   final log = <String>[];
+  bool failStart = false;
+  bool failStop = false;
 
   @override
   Future<SupabaseClient> start(CloudConnection c) async {
     log.add('start ${c.host}');
+    if (failStart) throw StateError('cannot start');
     return SupabaseClient(c.url, c.anonKey, authOptions: const AuthClientOptions(autoRefreshToken: false));
   }
 
   @override
-  Future<void> stop() async => log.add('stop');
+  Future<void> stop() async {
+    log.add('stop');
+    if (failStop) throw StateError('cannot stop');
+  }
 }
 
 void main() {
@@ -71,5 +77,28 @@ void main() {
     expect(starter.log.last, 'stop');
     expect(c.read(authServiceProvider), isNull);
     expect(await CloudConnectionStore().load(), isNull);
+  });
+
+  test('a failed start leaves no server and saves nothing', () async {
+    starter.failStart = true;
+    await expectLater(c.read(runtimeCloudProvider.notifier).connect(conn), throwsStateError);
+    expect(c.read(runtimeCloudProvider), isNull);
+    expect(await CloudConnectionStore().load(), isNull);
+  });
+
+  test('disconnect forgets the server even if stopping fails', () async {
+    await c.read(runtimeCloudProvider.notifier).connect(conn);
+    starter.failStop = true;
+    await c.read(runtimeCloudProvider.notifier).disconnect();
+    expect(c.read(runtimeCloudProvider), isNull);
+    expect(await CloudConnectionStore().load(), isNull);
+  });
+
+  test('copies remember which server they belong to', () async {
+    await c.read(runtimeCloudProvider.notifier).connect(conn);
+    final store = await LocalStore.inMemory(const DatabaseDef(id: 'd', name: 'D'));
+    await store.linkToCloud('cloud-1', 'pc');
+    await c.read(openStoreProvider.notifier).set(Future.value(store));
+    expect(await c.read(registryProvider).serverFor('cloud-1'), conn.url);
   });
 }

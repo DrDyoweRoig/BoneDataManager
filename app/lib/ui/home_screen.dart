@@ -121,6 +121,20 @@ class HomeScreen extends ConsumerWidget {
     ];
   }
 
+  /// "Couldn't reconnect to …" when the saved team server failed at start-up (until connected again).
+  List<Widget> _restoreProblem(WidgetRef ref, ThemeData theme) {
+    final problem = ref.watch(cloudRestoreProblemProvider);
+    if (problem == null || ref.watch(runtimeCloudProvider) != null) return const [];
+    return [
+      const SizedBox(height: 16),
+      Text(
+        problem,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: theme.colorScheme.error),
+      ),
+    ];
+  }
+
   void _openConnect(BuildContext context) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ConnectScreen()));
 
@@ -144,6 +158,7 @@ class HomeScreen extends ConsumerWidget {
         Icon(Icons.dataset_outlined, size: 40, color: theme.colorScheme.primary),
         const SizedBox(height: 8),
         Text('Bone Data Manager', style: theme.textTheme.headlineSmall, textAlign: TextAlign.center),
+        ..._restoreProblem(ref, theme),
         if (auth == null) ...[
           const SizedBox(height: 32),
           Text(
@@ -201,6 +216,7 @@ class HomeScreen extends ConsumerWidget {
               const SizedBox(height: 12),
               Text('Bone Data Manager', style: theme.textTheme.headlineMedium, textAlign: TextAlign.center),
               const SizedBox(height: 32),
+              ..._restoreProblem(ref, theme),
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WizardScreen())),
                 icon: const Icon(Icons.add),

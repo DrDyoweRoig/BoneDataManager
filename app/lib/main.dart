@@ -33,14 +33,19 @@ Future<void> main() async {
     // Builds without a built-in server: reconnect to the team server chosen in the app, if any.
     final saved = await CloudConnectionStore().load();
     RuntimeCloud? restored;
+    String? problem;
     if (saved != null) {
       try {
         restored = RuntimeCloud(saved, await SupabaseStarter().start(saved));
       } catch (_) {
         // Bad saved settings must never stop the app from opening; the user can connect again.
+        problem = "Couldn't reconnect to ${saved.host}. Check your internet connection, then connect again.";
       }
     }
-    overrides.add(runtimeCloudProvider.overrideWith(() => RuntimeCloudNotifier(restored)));
+    overrides.addAll([
+      runtimeCloudProvider.overrideWith(() => RuntimeCloudNotifier(restored)),
+      cloudRestoreProblemProvider.overrideWithValue(problem),
+    ]);
   }
   runApp(ProviderScope(overrides: overrides, child: const BoneDataManagerApp()));
 }
