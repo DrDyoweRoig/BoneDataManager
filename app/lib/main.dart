@@ -111,8 +111,8 @@ class BoneDataManagerApp extends ConsumerWidget {
                                   onSyncFirst: () async => ref.read(syncEngineProvider)?.syncNow(),
                                   onCloseGaps: () async {
                                     final settings = await ref.read(settingsProvider.future);
-                                    await BackupService(Directory(settings.backupDir))
-                                        .backup(store, exportedBy: settings.observerId ?? '');
+                                    await BackupFailed.guard(() => BackupService(Directory(settings.backupDir))
+                                        .backup(store, exportedBy: settings.observerId ?? ''));
                                     final engine = ref.read(syncEngineProvider);
                                     if (engine == null && store.cloudId != null) throw const CloudOffline();
                                     final changes = await (engine?.compactRefIds() ?? store.compactLocal());

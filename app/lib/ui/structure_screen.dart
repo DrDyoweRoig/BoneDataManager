@@ -1,7 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
+import '../backup/backup_service.dart';
 import '../cloud/cloud_api.dart';
 import '../data/local_store.dart';
 import '../entries/entry.dart';
@@ -31,7 +30,8 @@ class StructureScreen extends StatefulWidget {
   final Future<void> Function()? onMoveToCloud;
   final VoidCallback? onSaved;
 
-  /// Closes the gaps in the Ref IDs (backup, renumber, refresh); null hides the button.
+  /// Closes the gaps in the Ref IDs (backup, renumber, refresh) and returns the rows that changed; null
+  /// hides the button. A failed backup throws [BackupFailed].
   final Future<List<NumberChange>> Function()? onCloseGaps;
 
   /// Cloud databases: pushes this device's waiting rows so the preview sees their final numbers.
@@ -112,6 +112,7 @@ class _StructureScreenState extends State<StructureScreen> {
 
   Future<void> _closeGaps() async {
     final messenger = ScaffoldMessenger.of(context);
+    void say(String text) => messenger.showSnackBar(SnackBar(content: Text(text)));
     try {
       if (widget.store.cloudId != null && (await widget.store.pendingEntries()).isNotEmpty) {
         await widget.onSyncFirst?.call();
@@ -120,7 +121,7 @@ class _StructureScreenState extends State<StructureScreen> {
       final entries = await widget.store.allEntries();
       final map = compactionMap(entries.map((e) => e.number));
       if (map.isEmpty) {
-        messenger.showSnackBar(const SnackBar(content: Text('No gaps — nothing to change.')));
+        say('No gaps — nothing to change.');
         return;
       }
       final def = widget.store.def;
@@ -156,17 +157,19 @@ class _StructureScreenState extends State<StructureScreen> {
         ),
       );
       if (ok != true || !mounted) return;
-      await widget.onCloseGaps!();
-      if (mounted) setState(() => _error = null);
+      final changes = await widget.onCloseGaps!();
+      // Rows sharing a Ref ID change together: count Ref IDs, not rows.
+      final n = {for (final c in changes) c.refId}.length;
+      say(n == 0 ? 'No gaps — nothing to change.' : 'Renumbered $n Ref ID${n == 1 ? '' : 's'}.');
     } on CloudOffline {
-      if (mounted) setState(() => _error = 'Closing gaps needs an internet connection.');
+      say('Closing gaps needs an internet connection.');
     } on CloudDenied catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    } on FileSystemException catch (e) {
+      say(e.message);
+    } on BackupFailed catch (e) {
       // The backup comes first, so nothing was renumbered.
-      if (mounted) setState(() => _error = "Couldn't make a backup, so nothing was renumbered: $e");
+      say("Couldn't make a backup, so nothing was renumbered: $e");
     } catch (e) {
-      if (mounted) setState(() => _error = "Couldn't close gaps: $e");
+      say("Couldn't close gaps: $e");
     }
   }
 

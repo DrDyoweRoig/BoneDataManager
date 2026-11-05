@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:bone_data_manager/backup/backup_service.dart';
 import 'package:bone_data_manager/catalog/catalog.dart';
 import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/data/local_store.dart';
@@ -8,6 +9,7 @@ import 'package:bone_data_manager/schema/database_def.dart';
 import 'package:bone_data_manager/schema/layer.dart';
 import 'package:bone_data_manager/ui/structure_screen.dart';
 import 'package:bone_data_manager/ui/theme.dart';
+import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -110,10 +112,9 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  // The error sits at the bottom of the (lazy) list.
-  Future<void> showError(WidgetTester tester, String text) async {
-    await tester.scrollUntilVisible(find.textContaining(text), 500, scrollable: find.byType(Scrollable).first);
-    expect(find.textContaining(text), findsOneWidget);
+  // Close gaps errors are shown in a snackbar, wherever the list is scrolled.
+  void showError(String text) {
+    expect(find.descendant(of: find.byType(SnackBar), matching: find.textContaining(text)), findsOneWidget);
   }
 
   Future<void> renumber(WidgetTester tester) async {
@@ -151,17 +152,40 @@ void main() {
     expect(find.text('Close Ref ID gaps?'), findsNothing);
   });
 
-  testWidgets('a failed backup aborts closing gaps and says so', (tester) async {
-    await _pump(tester, gaps: true, onCloseGaps: () async => throw const FileSystemException('disk full'));
+  testWidgets('after renumbering it says how many Ref IDs changed', (tester) async {
+    await _pump(tester, gaps: true, onCloseGaps: () async => [
+          (id: 'a', number: 2, refId: 'MAS-0002', previousRefIds: ['MAS-0003']),
+          (id: 'b', number: 2, refId: 'MAS-0002', previousRefIds: ['MAS-0003']),
+          (id: 'c', number: 3, refId: 'MAS-0003', previousRefIds: ['MAS-0005']),
+        ]);
     await renumber(tester);
-    await showError(tester, "Couldn't make a backup, so nothing was renumbered:");
+    expect(find.text('Renumbered 2 Ref IDs.'), findsOneWidget);
+  });
+
+  testWidgets('a failed backup aborts closing gaps and says so', (tester) async {
+    await _pump(tester, gaps: true, onCloseGaps: () async => throw BackupFailed(const FileSystemException('disk full')));
+    await renumber(tester);
+    showError("Couldn't make a backup, so nothing was renumbered:");
     expect(find.textContaining('disk full'), findsOneWidget);
+  });
+
+  testWidgets('a backup that fails in SQLite is also reported as a failed backup', (tester) async {
+    await _pump(tester, gaps: true, onCloseGaps: () async => throw BackupFailed(SqliteException(extendedResultCode: 13, message: 'disk is full')));
+    await renumber(tester);
+    showError("Couldn't make a backup, so nothing was renumbered:");
+  });
+
+  testWidgets('a file error after the backup is not called a backup failure', (tester) async {
+    await _pump(tester, gaps: true, onCloseGaps: () async => throw const FileSystemException('locked'));
+    await renumber(tester);
+    showError("Couldn't close gaps:");
+    expect(find.textContaining('backup'), findsNothing);
   });
 
   testWidgets('any other failure while closing gaps is shown', (tester) async {
     await _pump(tester, gaps: true, onCloseGaps: () async => throw StateError('boom'));
     await renumber(tester);
-    await showError(tester, "Couldn't close gaps:");
+    showError("Couldn't close gaps:");
     expect(find.textContaining('boom'), findsOneWidget);
   });
 }

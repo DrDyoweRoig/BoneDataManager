@@ -8,6 +8,25 @@ import '../data/local_store.dart';
 import '../export/cell_format.dart';
 import '../export/excel_export.dart';
 
+/// The automatic backup before an irreversible change failed, so the change was not made.
+class BackupFailed implements Exception {
+  BackupFailed(this.cause);
+
+  final Object cause;
+
+  /// Runs [backup]; any failure (file system, SQLite, anything) comes out as [BackupFailed].
+  static Future<void> guard(Future<void> Function() backup) async {
+    try {
+      await backup();
+    } catch (e) {
+      throw BackupFailed(e);
+    }
+  }
+
+  @override
+  String toString() => '$cause';
+}
+
 class BackupInfo {
   const BackupInfo(this.databaseId, this.databaseName, this.at, this.sqlite, this.xlsx);
 

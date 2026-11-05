@@ -28,6 +28,14 @@ void main() {
 
   BackupService service() => BackupService(Directory('${tmp.path}/backups'), now: () => clock);
 
+  test('BackupFailed.guard reports any failure of the backup as BackupFailed', () async {
+    await expectLater(BackupFailed.guard(() async => throw StateError('sqlite said no')),
+        throwsA(isA<BackupFailed>().having((e) => '$e', 'message', contains('sqlite said no'))));
+    var ran = false;
+    await BackupFailed.guard(() async => ran = true);
+    expect(ran, isTrue);
+  });
+
   test('backup writes sqlite and xlsx with sanitised names', () async {
     final b = (await service().backup(store, exportedBy: 'AP'))!;
     expect(b.sqlite.existsSync(), isTrue);
