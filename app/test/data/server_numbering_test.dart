@@ -95,6 +95,17 @@ void main() {
     expect((await store.entryById('f'))!.number, -1); // stays provisional: its claim numbers it
   });
 
+  test('a row not uploaded yet whose old number now leads to two places is detached', () async {
+    // s was skipped earlier and still sits at 7 here, where group b has since moved.
+    await store.insertSynced([row('s', 7, 'M1'), row('b', 7, 'M2')]);
+    await store.addToGroup('MAS-0007', 7, [tooth('M3')], 'AP', ids: ['l']); // added to b's group
+    final skipped = await store.applyServerNumbering([at('s', 5, previous: ['MAS-0007']), at('b', 7)], 1);
+    expect(skipped, isEmpty);
+    final l = (await store.entryById('l'))!;
+    expect([l.number, l.refId, l.previousRefIds], [-1, 'MAS-TEMP-1', ['MAS-0007']]); // never into s's specimen
+    expect([(await store.entryById('s'))!.number, (await store.entryById('b'))!.number], [5, 7]);
+  });
+
   test('a pull keeps the conflict a pending row already has', () async {
     await store.insertSynced([row('x', 5, 'M1'), row('y', 6, 'M1')]);
     await store.updateEntry('x', tooth('M1'), 'JM');

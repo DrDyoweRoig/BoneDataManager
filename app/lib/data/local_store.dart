@@ -271,7 +271,8 @@ class LocalStore implements EntryWriter {
   /// - rows the server knows get its number and Ref IDs, except provisional ones (negative numbers):
   ///   only their claim gives them a real number;
   /// - rows not uploaded yet follow their group's new number; if their group has no live row on the
-  ///   server any more, they become provisional again (a new TEMP) and claim a number of their own.
+  ///   server any more, or its rows are now in more than one place, they become provisional again (a new
+  ///   TEMP) and claim a number of their own.
   /// A row the server knows whose new place is held here by another live row with the same element
   /// stays where it is (the pull settles it, as a conflict if that row has a pending edit); those ids are
   /// returned. A row not uploaded yet is never left on a stale number: it becomes provisional instead.
@@ -288,12 +289,12 @@ class LocalStore implements EntryWriter {
         }
 
         final changes = <String, NumberChange>{};
-        final moved = <int, int>{}; // old number → new number of live server rows
-        final kept = <int>{}; // numbers whose live server rows did not move
+        // Old number here → the numbers its live server rows have now (itself if they did not move).
+        final targets = <int, Set<int>>{};
         for (final s in server) {
           final r = rows[s.id];
           if (r == null || r.number < 0) continue;
-          if (!s.deleted) r.number == s.number ? kept.add(s.number) : moved[r.number] = s.number;
+          if (!s.deleted) (targets[r.number] ??= {}).add(s.number);
           if (r.number != s.number || r.refId != s.refId || !_sameList(_previous(r), s.previousRefIds)) {
             changes[s.id] = (id: s.id, number: s.number, refId: s.refId, previousRefIds: s.previousRefIds);
           }
@@ -321,11 +322,13 @@ class LocalStore implements EntryWriter {
 
         for (final r in rows.values) {
           if (!localOnly(r)) continue;
-          final n = moved[r.number];
-          if (n != null) {
-            changes[r.id] = _renumbered(r, n);
-          } else if (!kept.contains(r.number)) {
-            detach(r.number); // its group is gone from the server
+          final to = targets[r.number];
+          if (to == null || to.length > 1) {
+            // Its group is gone from the server, or rows that shared its number here are now in different
+            // places (one was left behind earlier): which one is its specimen is unknown.
+            detach(r.number);
+          } else if (to.single != r.number) {
+            changes[r.id] = _renumbered(r, to.single);
           }
         }
 
