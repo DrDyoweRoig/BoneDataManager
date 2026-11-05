@@ -64,6 +64,17 @@ begin
          'element_id', 'tibia', 'created_at', now(), 'modified_at', now()), 0, 0);
   log := log || case when r ->> 'status' = 'ok' then 'PASS a new entry with a claimed number is uploaded'
                      else 'FAIL push with a claimed number: ' || r::text end;
+  -- The server makes a new entry's Ref ID from its number, whatever the device sent.
+  n := public.claim_number(db, 'pc', 6, array[gen_random_uuid()]);
+  r := public.push_entry(db, jsonb_build_object('id', gen_random_uuid(), 'number', n, 'ref_id', 'T-9999',
+         'element_id', 'fibula', 'created_at', now(), 'modified_at', now()), 0, 0);
+  select count(*) into n2 from public.entries where database_id = db and number = n and ref_id = 'T-' || lpad(n::text, 4, '0');
+  log := log || case when r ->> 'status' = 'ok' and n2 = 1 then 'PASS a new entry gets its Ref ID from the server'
+                     else 'FAIL Ref ID of a new entry: ' || r::text end;
+  reset role;
+  delete from public.entries where database_id = db and number = n;
+  delete from public.temp_claims where database_id = db and device_id = 'pc' and temp_number = 6;
+  update public.databases set next_number = n where id = db;
   reset role;
 
   -- Numbers 1, 2, 57, 58: the counter is moved by hand to make a gap.
@@ -119,11 +130,11 @@ begin
 
   -- A claim for an uploaded entry adds the TEMP Ref ID to it once, without a new version.
   select id into id1 from public.entries where database_id = db and number = 1;
-  n := public.claim_number(db, 'pc', 3, array[id1], 'T-TEMP-3');
-  n2 := public.claim_number(db, 'pc-other', 3, array[id1], 'T-TEMP-3');
+  n := public.claim_number(db, 'pc', 3, array[id1]);
+  n2 := public.claim_number(db, 'pc-other', 3, array[id1]);
   select count(*) into n2 from public.entries
   where id = id1 and previous_ref_ids = '["T-TEMP-3"]' and version = 1;
-  log := log || case when n = 1 and n2 = 1 then 'PASS a claim keeps the TEMP Ref ID on an uploaded entry'
+  log := log || case when n = 1 and n2 = 1 then 'PASS a claim keeps the TEMP Ref ID (made by the server) on an uploaded entry'
                      else 'FAIL TEMP Ref ID on an uploaded entry: number ' || n || ', rows ' || n2 end;
 
   -- A claim whose only uploaded entry is deleted takes a new number (the old one may be reused).
@@ -132,7 +143,7 @@ begin
   values (gen_random_uuid(), db, 600, 'T-0600', 'rib', true) returning id into id1;
   set local role authenticated;
   select next_number into n2 from public.databases where id = db;
-  n := public.claim_number(db, 'pc', 4, array[id1], 'T-TEMP-4');
+  n := public.claim_number(db, 'pc', 4, array[id1]);
   log := log || case when n = n2 then 'PASS a claim does not reuse the number of a deleted entry'
                      else 'FAIL claim for a deleted entry returned ' || n || ' (next was ' || n2 || ')' end;
   -- Its entries are not uploaded under that number, so compaction keeps the claim's number live.

@@ -78,18 +78,37 @@ void main() {
   test('a claim for uploaded rows adds the TEMP Ref ID to them once, without a new version', () async {
     server.put('db', _e('a', 7));
     final before = server.rows['db']!['a']!.$2;
-    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b'], tempRef: 'X-TEMP-1'), 7);
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b']), 7);
     final (row, at) = server.rows['db']!['a']!;
     expect([row.previousRefIds, row.version], [['X-TEMP-1'], 1]);
     expect(at.isAfter(before), isTrue);
-    await api.claimNumber('db', 'dev2', 1, ['a'], tempRef: 'X-TEMP-1');
+    await api.claimNumber('db', 'dev2', 1, ['a']);
     expect(server.rows['db']!['a']!.$1.previousRefIds, ['X-TEMP-1']);
+  });
+
+  test("the server works out the TEMP Ref ID from the prefix, and a new row's Ref ID from its number", () async {
+    Future<String> temp(String prefix) async {
+      server.defs['db'] = DatabaseDef(id: 'db', name: 'D', prefix: prefix, digits: 1);
+      server.put('db', _e('h$prefix', 9));
+      server.claims.clear();
+      await api.claimNumber('db', 'dev', 3, ['h$prefix']);
+      return server.rows['db']!['h$prefix']!.$1.previousRefIds.single;
+    }
+
+    expect([await temp('HOL'), await temp('MAS-'), await temp('')], ['HOL-TEMP-3', 'MAS-TEMP-3', 'TEMP-3']);
+    server.defs['db'] = const DatabaseDef(id: 'db', name: 'D', prefix: 'X-', digits: 3);
+    final n = await api.claimNumber('db', 'dev', 4, ['new']);
+    final wrong = Entry(
+        id: 'new', number: n, refId: 'X-999', data: const EntryDraft(elementId: 'bone'), createdBy: '',
+        createdAt: DateTime.utc(2026), modifiedBy: '', modifiedAt: DateTime.utc(2026));
+    await api.pushEntry('db', wrong, baseVersion: 0, epoch: 0);
+    expect(server.rows['db']!['new']!.$1.refId, 'X-${n.toString().padLeft(3, '0')}');
   });
 
   test('a claim reuses only a live held row, but still keeps the TEMP on deleted ones', () async {
     server.put('db', _e('a', 4, deleted: true));
     server.nextNumber['db'] = 6;
-    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b'], tempRef: 'X-TEMP-1'), 6);
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b']), 6);
     expect(server.nextNumber['db'], 7);
     expect(server.rows['db']!['a']!.$1.previousRefIds, ['X-TEMP-1']);
   });

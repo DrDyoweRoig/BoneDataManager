@@ -322,8 +322,7 @@ class SyncEngine implements EntryWriter {
       }
       final int n;
       try {
-        n = await api.claimNumber(_db, store.deviceId!, -temp, group,
-            tempRef: provisionalRefId(store.def.prefix, -temp));
+        n = await api.claimNumber(_db, store.deviceId!, -temp, group);
       } on CloudDenied catch (err) {
         problem = err.message;
         continue;

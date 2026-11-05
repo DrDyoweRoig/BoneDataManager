@@ -137,9 +137,9 @@ class SupabaseCloudApi implements CloudApi {
       );
 
   @override
-  Future<int> claimNumber(String db, String device, int provisional, List<String> ids, {String? tempRef}) =>
-      _call(() async => (await client.rpc('claim_number',
-              params: {'db': db, 'device': device, 'temp': provisional, 'ids': ids, 'temp_ref': tempRef}) as num)
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids) => _call(() async =>
+      (await client.rpc('claim_number', params: {'db': db, 'device': device, 'temp': provisional, 'ids': ids})
+              as num)
           .toInt());
 
   @override

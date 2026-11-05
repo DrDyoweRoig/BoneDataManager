@@ -500,18 +500,23 @@ drop table if exists public.id_blocks;
 
 -- The real number for provisional group `temp` of `device`. `ids` are the group's entry ids: if one of
 -- them already reached the server (an online create whose answer was lost) and is live, its number is
--- reused (a deleted row's number may belong to another specimen after compaction). `temp_ref` (the TEMP
--- Ref ID the user saw) is added to the previous_ref_ids of the rows already there, so no ID is lost.
+-- reused (a deleted row's number may belong to another specimen after compaction). The group's TEMP Ref
+-- ID (as the app shows it: 'HOL' → 'HOL-TEMP-3', 'MAS-' → 'MAS-TEMP-3', '' → 'TEMP-3') is added to the
+-- previous_ref_ids of the rows already there, so no ID is lost.
+drop function if exists public.claim_number(uuid, text, int, uuid[], text);
 drop function if exists public.claim_number(uuid, text, int, uuid[]);
-create or replace function public.claim_number(db uuid, device text, temp int, ids uuid[], temp_ref text default null)
+create or replace function public.claim_number(db uuid, device text, temp int, ids uuid[])
 returns int language plpgsql security definer set search_path = public as $$
 declare
-  n    int;
-  held uuid[];
+  n        int;
+  held     uuid[];
+  p        text;
+  temp_ref text;
 begin
   perform public._require(db, array['owner', 'editor']);
   -- One claim at a time per database, and never during compact_ref_ids.
-  perform 1 from public.databases d where d.id = db for no key update;
+  select coalesce(d.prefix, '') into p from public.databases d where d.id = db for no key update;
+  temp_ref := p || case when p ~ '[A-Za-z0-9]$' then '-' else '' end || 'TEMP-' || claim_number.temp;
 
   select c.number, c.ids into n, held from public.temp_claims c
   where c.database_id = db and c.device_id = device and c.temp_number = temp;
@@ -532,12 +537,10 @@ begin
     where d.id = db
     returning d.next_number - 1 into n;
   end if;
-  if temp_ref is not null then
-    -- Bumps updated_at (devices pull it) but not version (no conflict with pending edits).
-    update public.entries x
-    set previous_ref_ids = x.previous_ref_ids || jsonb_build_array(temp_ref), updated_at = now()
-    where x.database_id = db and x.id = any (claim_number.ids) and not (x.previous_ref_ids ? temp_ref);
-  end if;
+  -- Bumps updated_at (devices pull it) but not version (no conflict with pending edits).
+  update public.entries x
+  set previous_ref_ids = x.previous_ref_ids || jsonb_build_array(temp_ref), updated_at = now()
+  where x.database_id = db and x.id = any (claim_number.ids) and not (x.previous_ref_ids ? temp_ref);
 
   insert into public.temp_claims (database_id, device_id, temp_number, number, ids)
   values (db, device, temp, n, coalesce(claim_number.ids, '{}'));
@@ -689,6 +692,7 @@ end $$;
 -- removed on purpose, so an outdated app cannot upload numbers that may have changed.
 -- New id: inserted if its number was claimed (temp_claims) or joins a live Ref ID; if numbers
 -- changed since the device's epoch, returns {"status": "stale"} so the device renumbers and retries.
+-- Its ref_id is made here from the number; previous_ref_ids (it carries the TEMP) comes from the device.
 -- Existing id: as before; an update never touches number, ref_id or previous_ref_ids, except an undelete
 -- after a compaction (deleted_epoch is older): its old number may be another specimen's now, so it takes
 -- a new one from next_number and keeps the old Ref ID in previous_ref_ids.
@@ -734,7 +738,7 @@ begin
       insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
                                   "values", created_by, created_at, modified_by, modified_at, version, deleted,
                                   previous_ref_ids, deleted_epoch)
-      values (eid, db, num, e ->> 'ref_id', e ->> 'element_id', e ->> 'dentition', e ->> 'tooth_type',
+      values (eid, db, num, public._ref(p, dg, num), e ->> 'element_id', e ->> 'dentition', e ->> 'tooth_type',
               e ->> 'jaw', e ->> 'side', coalesce(e -> 'values', '{}'), coalesce(e ->> 'created_by', ''),
               (e ->> 'created_at')::timestamptz, coalesce(e ->> 'modified_by', ''),
               (e ->> 'modified_at')::timestamptz, 1, gone,
@@ -809,9 +813,9 @@ begin
 end $$;
 
 -- Only signed-in users may call the functions.
-revoke execute on function public.claim_number(uuid, text, int, uuid[], text), public.compact_ref_ids(uuid),
+revoke execute on function public.claim_number(uuid, text, int, uuid[]), public.compact_ref_ids(uuid),
   public.push_entry(uuid, jsonb, int, int) from public, anon;
-grant execute on function public.claim_number(uuid, text, int, uuid[], text), public.compact_ref_ids(uuid),
+grant execute on function public.claim_number(uuid, text, int, uuid[]), public.compact_ref_ids(uuid),
   public.push_entry(uuid, jsonb, int, int) to authenticated;
 
 -- The app expects this setup.

@@ -71,8 +71,9 @@ abstract class CloudApi {
 
   /// The real number for provisional group [provisional] of [device]. [ids] are the group's entry ids;
   /// asking again returns the same number. When some of them are already on the server (a lost answer)
-  /// their number is reused and [tempRef], the group's TEMP Ref ID, is added to their Previous Ref IDs.
-  Future<int> claimNumber(String db, String device, int provisional, List<String> ids, {String? tempRef});
+  /// their number is reused (if live) and the group's TEMP Ref ID, worked out by the server from the
+  /// prefix, is added to their Previous Ref IDs.
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids);
 
   Future<int> numberingEpoch(String db);
 

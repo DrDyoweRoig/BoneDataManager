@@ -136,13 +136,8 @@ void main() {
     test('claim_number sends the group ids and returns the number', () async {
       response = 17;
       expect(await api.claimNumber('db', 'dev', -1, ['a', 'b']), 17);
-      expect(body(0), {'db': 'db', 'device': 'dev', 'temp': -1, 'ids': ['a', 'b'], 'temp_ref': null});
-    });
-
-    test('claim_number sends the TEMP Ref ID', () async {
-      response = 3;
-      await api.claimNumber('db', 'dev', 1, ['a'], tempRef: 'X-TEMP-1');
-      expect(body(0)['temp_ref'], 'X-TEMP-1');
+      // The server works out the TEMP Ref ID itself.
+      expect(body(0), {'db': 'db', 'device': 'dev', 'temp': -1, 'ids': ['a', 'b']});
     });
 
     test('current numbers include whether the row is deleted', () async {

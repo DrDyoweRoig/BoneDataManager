@@ -248,7 +248,7 @@ class FakeCloudApi implements CloudApi {
   }
 
   @override
-  Future<int> claimNumber(String db, String device, int provisional, List<String> ids, {String? tempRef}) async {
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids) async {
     _checkWrite(db);
     final key = (db, device, provisional);
     final existing = server.claims[key];
@@ -266,9 +266,11 @@ class FakeCloudApi implements CloudApi {
     final live = held.where((e) => !e.deleted).toList();
     final n = live.isNotEmpty ? live.first.number : server.nextNumber[db]!;
     if (live.isEmpty) server.nextNumber[db] = n + 1;
-    // The held rows keep the TEMP Ref ID the user saw (updated_at moves, version does not).
+    // The held rows keep the TEMP Ref ID the user saw (updated_at moves, version does not); the server
+    // works it out from the prefix.
+    final tempRef = provisionalRefId(server.defs[db]!.prefix, provisional);
     for (final e in held) {
-      if (tempRef != null && !e.previousRefIds.contains(tempRef)) {
+      if (!e.previousRefIds.contains(tempRef)) {
         server._put(db, _with(e, previousRefIds: [...e.previousRefIds, tempRef]));
       }
     }
@@ -332,10 +334,11 @@ class FakeCloudApi implements CloudApi {
       }
     }
     if (cur == null) {
+      final def = server.defs[db]!;
       final row = Entry(
           id: e.id,
           number: e.number,
-          refId: e.refId,
+          refId: formatRefId(def.prefix, def.digits, e.number), // the server's, not the client's
           data: e.data,
           createdBy: e.createdBy,
           createdAt: e.createdAt,
