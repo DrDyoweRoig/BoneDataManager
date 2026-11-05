@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../data/local_store.dart';
 import '../entries/entry.dart';
 import '../entries/entry_writer.dart';
+import '../ids/ref_id.dart';
 import '../schema/database_def.dart';
 import 'cloud_api.dart';
 
@@ -60,15 +61,13 @@ class BackOnline extends SyncEvent {
 /// Keeps a cloud-linked [LocalStore] in step with the cloud. The UI writes through this engine;
 /// reads stay on the local store.
 class SyncEngine implements EntryWriter {
-  SyncEngine(this.store, this.api,
-      {this.blockSize = 50, this.period = const Duration(seconds: 30), this.allowOffline = true});
+  SyncEngine(this.store, this.api, {this.period = const Duration(seconds: 30), this.allowOffline = true});
 
   final LocalStore store;
   final CloudApi api;
-  final int blockSize;
   final Duration period;
 
-  /// false on phones: saving needs the server, and no offline number block is ever reserved.
+  /// false on phones: saving needs the server, so no provisional (TEMP) Ref ID is ever made.
   final bool allowOffline;
 
   final _status = ValueNotifier(const SyncStatus());
@@ -184,7 +183,7 @@ class SyncEngine implements EntryWriter {
       await _publish();
       rethrow;
     }
-    return made;
+    return [for (final e in made) await store.entryById(e.id) ?? e]; // as uploaded (numbers may have moved)
   }
 
   @override
@@ -205,20 +204,26 @@ class SyncEngine implements EntryWriter {
   }
 
   /// Mobile: upload this one change before returning, so "saved" means "on the server".
+  /// If the Ref IDs were renumbered meanwhile, this copy follows the new numbers and tries once more.
   Future<void> _pushNow(String id) async {
-    final e = await store.entryById(id);
-    if (e == null) return;
     try {
-      switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(id), epoch: store.numberingEpoch ?? 0)) {
-        case PushOk(:final version):
-          await store.markSynced(id, version, pushedVersion: e.version);
-        case PushStale():
-          break; // numbers changed: stays pending, retried on the next round
-        case PushConflict(:final server):
-          await store.addConflict(server);
-        case PushDuplicate(:final existing):
-          if (await store.baseVersion(id) == 0) throw ToothAlreadyInGroup(elementLabel(e.data), e.refId);
-          await store.addConflict(existing, mineId: id);
+      for (var attempt = 1;; attempt++) {
+        final e = await store.entryById(id);
+        if (e == null) return;
+        switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(id), epoch: store.numberingEpoch ?? 0)) {
+          case PushOk(:final version):
+            await store.markSynced(id, version, pushedVersion: e.version);
+          case PushStale():
+            await _refreshNumbers();
+            if (attempt < 2) continue;
+            throw const CloudDenied('The Ref IDs were just renumbered on another device. Please try again.');
+          case PushConflict(:final server):
+            await store.addConflict(server);
+          case PushDuplicate(:final existing):
+            if (await store.baseVersion(id) == 0) throw ToothAlreadyInGroup(elementLabel(e.data), e.refId);
+            await store.addConflict(existing, mineId: id);
+        }
+        return;
       }
     } on CloudOffline {
       _goOffline();
@@ -228,7 +233,139 @@ class SyncEngine implements EntryWriter {
     }
   }
 
-  /// One full round: definition, number block, push, pull. Calls made while a round runs are
+  /// Owner only, needs a connection: closes the gaps in the Ref IDs on the server, renumbers this copy
+  /// the same way, then syncs. Returns the rows that changed.
+  Future<List<NumberChange>> compactRefIds() async {
+    final r = await api.compactRefIds(_db);
+    await _applyNumbers(r.changes, r.epoch);
+    await _publish();
+    await syncNow();
+    return r.changes;
+  }
+
+  /// Applies the server's [changes] (the epoch [epoch] numbering) to this copy. Rows not uploaded yet
+  /// that sit under a moved number (a tooth added offline to that group) move with their group.
+  /// Pending edits and versions are kept: the number belongs to the server, the values to the editor.
+  Future<void> _applyNumbers(List<NumberChange> changes, int epoch) async {
+    final local = {for (final e in await store.entriesIncludingDeleted()) e.id: e};
+    final moved = <int, int>{};
+    for (final c in changes) {
+      final l = local[c.id];
+      if (l != null && l.number > 0 && l.number != c.number) moved[l.number] = c.number;
+    }
+    final changed = {for (final c in changes) c.id};
+    final followers = <NumberChange>[];
+    for (final l in local.values) {
+      final n = moved[l.number];
+      if (n == null || l.deleted || changed.contains(l.id) || await store.baseVersion(l.id) != 0) continue;
+      followers.add((
+        id: l.id,
+        number: n,
+        refId: formatRefId(store.def.prefix, store.def.digits, n),
+        previousRefIds: [...l.previousRefIds, l.refId],
+      ));
+    }
+    await store.applyNumbering([...changes, ...followers], epoch: epoch);
+  }
+
+  /// Takes the server's current numbering: every row whose number or Ref IDs differ here is rewritten.
+  Future<void> _refreshNumbers() async {
+    final epoch = await api.numberingEpoch(_db); // before the rows: a later compaction is caught next round
+    final local = {for (final e in await store.entriesIncludingDeleted()) e.id: e};
+    final changes = [
+      for (final s in await api.currentNumbers(_db))
+        if (local[s.id] case final l?)
+          if (l.number != s.number || l.refId != s.refId || !listEquals(l.previousRefIds, s.previousRefIds)) s
+    ];
+    await _applyNumbers(changes, epoch);
+  }
+
+  /// [e] as uploaded under real number [n]: its TEMP Ref ID goes to previousRefIds.
+  Entry _numbered(Entry e, int n) => Entry(
+      id: e.id,
+      number: n,
+      refId: formatRefId(store.def.prefix, store.def.digits, n),
+      data: e.data,
+      createdBy: e.createdBy,
+      createdAt: e.createdAt,
+      modifiedBy: e.modifiedBy,
+      modifiedAt: e.modifiedAt,
+      version: e.version,
+      deleted: e.deleted,
+      previousRefIds: [...e.previousRefIds, e.refId]);
+
+  /// Uploads pending rows; returns how many went up and the last refusal message.
+  /// Provisional (TEMP) groups go first, oldest first: each claims its real number (asking again returns
+  /// the group's current number, even after a compaction) and its rows go up under it; once the whole
+  /// group is accepted it is renumbered here too. Until then it stays provisional on this copy.
+  /// A stale push (the numbers changed meanwhile) renumbers this copy and ends the uploads for this round.
+  Future<(int, String?)> _pushPending() async {
+    final conflicted = {for (final c in await store.conflicts()) c.mine.id};
+    final pending = await store.pendingEntries();
+    var pushed = 0;
+    String? problem;
+
+    /// true: accepted; false: not accepted (conflict, refused); null: stale, stop pushing.
+    Future<bool?> push(Entry local, Entry upload) async {
+      try {
+        switch (await api.pushEntry(_db, upload,
+            baseVersion: await store.baseVersion(local.id), epoch: store.numberingEpoch ?? 0)) {
+          case PushOk(:final version):
+            await store.markSynced(local.id, version, pushedVersion: local.version);
+            pushed++;
+            return true;
+          case PushStale():
+            await _refreshNumbers();
+            return null;
+          case PushConflict(:final server):
+            await store.addConflict(server);
+          case PushDuplicate(:final existing):
+            await store.addConflict(existing, mineId: local.id);
+        }
+      } on CloudDenied catch (err) {
+        problem = err.message; // keep it pending, carry on with the others and the pull
+      }
+      return false;
+    }
+
+    final temps = {for (final e in pending) if (e.number < 0) e.number}.toList()..sort((a, b) => b.compareTo(a));
+    for (final temp in temps) {
+      if (_disposed) return (pushed, problem);
+      final group = [for (final e in await store.entriesIncludingDeleted()) if (e.number == temp) e.id];
+      final int n;
+      try {
+        n = await api.claimNumber(_db, store.deviceId!, -temp, group);
+      } on CloudDenied catch (err) {
+        problem = err.message;
+        continue;
+      }
+      var accepted = true;
+      for (final snapshot in pending.where((e) => e.number == temp)) {
+        if (_disposed) return (pushed, problem);
+        if (conflicted.contains(snapshot.id)) {
+          accepted = false;
+          continue;
+        }
+        final e = await store.entryById(snapshot.id); // freshest local version
+        if (e == null || e.number != temp) continue;
+        final ok = await push(e, _numbered(e, n));
+        if (ok == null) return (pushed, problem);
+        if (!ok) accepted = false;
+      }
+      if (accepted) await store.assignNumber(temp, n);
+    }
+
+    for (final snapshot in pending.where((e) => e.number > 0)) {
+      if (_disposed) break;
+      if (conflicted.contains(snapshot.id)) continue;
+      final e = await store.entryById(snapshot.id); // freshest local version
+      if (e == null) continue;
+      if (await push(e, e) == null) break;
+    }
+    return (pushed, problem);
+  }
+
+  /// One full round: definition, numbering, push, pull. Calls made while a round runs are
   /// merged into one follow-up round, and they complete only when that round has finished.
   Future<void> syncNow() async {
     if (_disposed) return;
@@ -262,31 +399,22 @@ class SyncEngine implements EntryWriter {
         onDefinitionChanged?.call();
       }
 
-      final conflicted = {for (final c in await store.conflicts()) c.mine.id};
-      var pushed = 0;
-      for (final snapshot in await store.pendingEntries()) {
-        if (_disposed) return;
-        if (conflicted.contains(snapshot.id)) continue;
-        final e = await store.entryById(snapshot.id); // freshest local version
-        if (e == null) continue;
-        try {
-          switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(e.id), epoch: store.numberingEpoch ?? 0)) {
-            case PushOk(:final version):
-              await store.markSynced(e.id, version, pushedVersion: e.version);
-              pushed++;
-            case PushStale():
-              break; // stays pending, retried on the next round
-            case PushConflict(:final server):
-              await store.addConflict(server);
-            case PushDuplicate(:final existing):
-              await store.addConflict(existing, mineId: e.id);
-          }
-        } on CloudDenied catch (err) {
-          problem = err.message; // keep it pending, carry on with the others and the pull
-        }
-      }
+      // The Ref IDs were compacted elsewhere: follow the new numbers before uploading anything.
+      if (await api.numberingEpoch(_db) != store.numberingEpoch) await _refreshNumbers();
+
+      final (pushed, refused) = await _pushPending();
+      problem = refused;
+      if (_disposed) return;
 
       final changes = await api.changesSince(_db, await store.lastPull());
+      // A renumbered row would clash with stale local numbers (and mark live rows deleted): renumber first.
+      for (final (e, _) in changes) {
+        final local = await store.entryById(e.id);
+        if (local != null && local.number != e.number) {
+          await _refreshNumbers();
+          break;
+        }
+      }
       for (final (e, _) in changes) {
         if (!await store.applyRemote(e) && e.version > await store.baseVersion(e.id)) {
           await store.addConflict(e);

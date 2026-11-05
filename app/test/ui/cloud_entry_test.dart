@@ -9,8 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../support/fake_cloud_api.dart';
 
 void main() {
-  // Skipped until Task 6 (server numbers without blocks).
-  testWidgets('entries of a cloud database are saved through the sync engine', skip: true, (tester) async {
+  testWidgets('entries of a cloud database are saved through the sync engine', (tester) async {
     tester.view.physicalSize = const Size(1200, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -21,7 +20,7 @@ void main() {
       await api.createDatabase(def, nextNumber: 1);
       final s = await LocalStore.inMemory(def);
       await s.linkToCloud('db1', 'pc-a');
-      final e = SyncEngine(s, api, blockSize: 10);
+      final e = SyncEngine(s, api);
       await e.syncNow();
       return (s, e);
     }))!;
@@ -42,6 +41,6 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pumpAndSettle();
-    expect(server.entries('db1').single.refId, 'MAS-0011'); // 1–10 reserved for this computer
+    expect(server.entries('db1').single.refId, 'MAS-0001'); // the server's next number: no gaps
   });
 }

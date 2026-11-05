@@ -36,11 +36,11 @@ void main() {
 
   /// One simulated computer: its own local copy, connection and engine.
   Future<(SyncEngine, LocalStore, FakeCloudApi)> computer(String device,
-      {int blockSize = 50, File? file, String email = 'owner@example.com'}) async {
+      {File? file, String email = 'owner@example.com'}) async {
     final api = FakeCloudApi(server, email: email);
     final store = file == null ? await LocalStore.inMemory(def) : await LocalStore.create(file, def);
     await store.linkToCloud('db1', device);
-    final engine = SyncEngine(store, api, blockSize: blockSize);
+    final engine = SyncEngine(store, api);
     cleanup.add(() async {
       await engine.dispose();
       await store.close();
@@ -52,12 +52,12 @@ void main() {
   test('online entries get server numbers and are stored as synced', () async {
     final (engine, store, _) = await computer('pc-a');
     final made = await engine.createEntries([left, right], 'AP');
-    expect(made.map((e) => e.refId), ['MAS-0051', 'MAS-0052']); // 1–50 reserved for this computer
-    expect(server.entries('db1').map((e) => e.refId), ['MAS-0051', 'MAS-0052']);
+    expect(made.map((e) => e.refId), ['MAS-0001', 'MAS-0002']); // no numbers reserved: no gaps
+    expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0002']);
     expect(await store.pendingEntries(), isEmpty);
-  }, skip: 'Task 6');
+  });
 
-  test('offline entries use the reserved block and announce going offline once', () async {
+  test('offline entries get provisional TEMP IDs and announce going offline once', () async {
     final (engine, store, api) = await computer('pc-a');
     final events = <SyncEvent>[];
     engine.events.listen(events.add);
@@ -65,11 +65,12 @@ void main() {
     await engine.createEntries([left], 'AP');
     await engine.createEntries([right], 'AP');
     await Future<void>.delayed(Duration.zero);
-    expect((await store.allEntries()).map((e) => e.refId), ['MAS-0001', 'MAS-0002']);
+    expect((await store.allEntries()).map((e) => e.refId).toSet(), {'MAS-TEMP-1', 'MAS-TEMP-2'});
+    expect(server.claims, isEmpty);
     expect(events.whereType<WentOffline>().length, 1);
     expect(engine.status.value.connection, Connection.offline);
     expect(engine.status.value.pending, 2);
-  }, skip: 'Task 6');
+  });
 
   test('back online pushes pending entries and reports how many', () async {
     final (engine, _, api) = await computer('pc-a');
@@ -83,7 +84,7 @@ void main() {
     expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0002']);
     expect((events.last as BackOnline).synced, 2);
     expect(engine.status.value, const SyncStatus(connection: Connection.online, pending: 0, conflicts: 0));
-  }, skip: 'Task 6');
+  });
 
   test('entries made elsewhere arrive on the next sync', () async {
     final (a, storeA, _) = await computer('pc-a');
@@ -159,10 +160,11 @@ void main() {
     engine = SyncEngine(store, api);
     await engine.syncNow();
     expect(server.entries('db1').single.refId, 'MAS-0001');
+    expect(server.entries('db1').single.previousRefIds, ['MAS-TEMP-1']);
     await engine.dispose();
     await store.close();
     await tmp.delete(recursive: true);
-  }, skip: 'Task 6');
+  });
 
   test('a server refusal during background sync is reported, not thrown or taken as offline', () async {
     final (engine, store, api) = await computer('pc-a');
@@ -183,9 +185,9 @@ void main() {
     await owner.createEntries([left], 'AP');
     server.members['db1']!['viewer@example.com'] = 'viewer';
     final (viewer, store, _) = await computer('pc-v', email: 'viewer@example.com');
-    expect((await store.allEntries()).single.refId, 'MAS-0051');
+    expect((await store.allEntries()).single.refId, 'MAS-0001');
     expect(viewer.problem.value, isNull);
-  }, skip: 'Task 6');
+  });
 
   test('C2: an edit made while its entry is being pushed is kept and uploaded next', () async {
     final (engine, store, api) = await computer('pc-a');
@@ -355,21 +357,22 @@ void main() {
     test('online: the server gives one number to the whole selection', () async {
       final (engine, store, _) = await computer('pc-a');
       final made = await engine.createEntries([m1, m2], 'AP', sharedId: true);
-      expect(made.map((e) => e.refId), ['MAS-0051', 'MAS-0051']);
-      expect(server.entries('db1').map((e) => e.refId), ['MAS-0051', 'MAS-0051']);
-      expect(server.nextNumber['db1'], 52);
+      expect(made.map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      expect(server.nextNumber['db1'], 2);
       expect((await store.allEntries()).length, 2);
-    }, skip: 'Task 6');
+    });
 
-    test('offline: one block number, uploaded when back online', () async {
+    test('offline: one TEMP ID, one real number when back online', () async {
       final (engine, _, api) = await computer('pc-a');
       api.online = false;
       final made = await engine.createEntries([m1, m2], 'AP', sharedId: true);
-      expect(made.map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      expect(made.map((e) => e.refId), ['MAS-TEMP-1', 'MAS-TEMP-1']);
       api.online = true;
       await engine.syncNow();
       expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
-    }, skip: 'Task 6');
+      expect(server.nextNumber['db1'], 2);
+    });
 
     test('adding to an ID offline uploads later under the same number', () async {
       final (engine, store, api) = await computer('pc-a');
@@ -379,9 +382,9 @@ void main() {
       api.online = true;
       await engine.syncNow();
       expect(server.entries('db1').map((e) => '${e.refId} ${e.data.side!.label}'),
-          ['MAS-0051 Left', 'MAS-0051 Right']);
+          ['MAS-0001 Left', 'MAS-0001 Right']);
       expect(await store.pendingEntries(), isEmpty);
-    }, skip: 'Task 6');
+    });
 
     test('phone: adding to an ID needs a connection', () async {
       final api = FakeCloudApi(server);
@@ -482,6 +485,220 @@ void main() {
           throwsA(isA<ToothAlreadyInGroup>()));
       expect((await phone.entriesInGroup(first.number)).where((e) => e.createdBy == 'AP'), isEmpty);
       expect(await phone.pendingEntries(), isEmpty);
+    });
+  });
+
+  group('gapless Ref IDs', () {
+    EntryDraft t(String type) => EntryDraft(
+        elementId: kTeethId, dentition: Dentition.permanent, toothType: type, jaw: Jaw.lower, side: Side.left);
+
+    /// Live rows #1..#6 and a tooth group (M1) at #57: compacting maps 57 → 7.
+    Future<Entry> groupAt57(SyncEngine a) async {
+      for (var i = 0; i < 6; i++) {
+        await a.createEntries([t('M1')], 'AP');
+      }
+      server.nextNumber['db1'] = 57;
+      return (await a.createEntries([t('M1')], 'AP')).single;
+    }
+
+    List<int> liveNumbers() => [for (final e in server.entries('db1')) if (!e.deleted) e.number];
+
+    test('offline entries get real numbers on reconnect, no gaps', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      final (b, _, _) = await computer('pc-b');
+      await a.createEntries([left], 'AP'); // #1
+      apiA.online = false;
+      final temps = await a.createEntries([left, right], 'AP');
+      expect(temps.map((e) => e.refId), ['MAS-TEMP-1', 'MAS-TEMP-2']);
+      await b.createEntries([right], 'JM'); // #2
+      apiA.online = true;
+      await a.syncNow();
+      final mine = server.entries('db1').where((e) => e.number > 2).toList();
+      expect(mine.map((e) => '${e.refId} ${e.data.side!.label} ${e.previousRefIds}'),
+          ['MAS-0003 Left [MAS-TEMP-1]', 'MAS-0004 Right [MAS-TEMP-2]']);
+      expect(server.nextNumber['db1'], 5);
+      expect(server.entries('db1').map((e) => e.number), [1, 2, 3, 4]);
+      expect((await storeA.allEntries()).map((e) => '${e.refId} ${e.previousRefIds}'),
+          ['MAS-0001 []', 'MAS-0002 []', 'MAS-0003 [MAS-TEMP-1]', 'MAS-0004 [MAS-TEMP-2]']);
+      expect(await storeA.pendingEntries(), isEmpty);
+    });
+
+    test('offline shared group plus added teeth get one number', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      apiA.online = false;
+      final made = await a.createEntries([t('M1'), t('M2')], 'AP', sharedId: true);
+      await a.addToGroup(made.first.refId, made.first.number, [t('M3')], 'AP');
+      apiA.online = true;
+      await a.syncNow();
+      expect(server.entries('db1').map((e) => '${e.refId} ${e.data.toothType} ${e.previousRefIds}'),
+          unorderedEquals(['MAS-0001 M1 [MAS-TEMP-1]', 'MAS-0001 M2 [MAS-TEMP-1]', 'MAS-0001 M3 [MAS-TEMP-1]']));
+      expect(server.claims.length, 1);
+      expect(server.nextNumber['db1'], 2);
+      expect((await storeA.allEntries()).map((e) => e.refId), ['MAS-0001', 'MAS-0001', 'MAS-0001']);
+      expect(await storeA.pendingEntries(), isEmpty);
+    });
+
+    test('lost create response then offline fallback claims the same number', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      apiA.dropNextResponse = true;
+      final made = await a.createEntries([left, right], 'AP', sharedId: true);
+      expect(made.map((e) => e.refId), ['MAS-TEMP-1', 'MAS-TEMP-1']); // fell back with the same ids
+      expect(server.nextNumber['db1'], 2);
+      await a.syncNow();
+      expect(server.nextNumber['db1'], 2); // no number spent twice
+      expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      expect((await storeA.allEntries()).map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      expect(a.status.value.conflicts, 0);
+      expect(await storeA.pendingEntries(), isEmpty);
+    });
+
+    test('compaction on one PC reaches the other without deleting rows', () async {
+      final (a, storeA, _) = await computer('pc-a');
+      final (b, storeB, _) = await computer('pc-b');
+      final made = [for (var i = 0; i < 4; i++) (await a.createEntries([t('M1')], 'AP')).single];
+      await a.deleteEntry(made[1].id, 'AP'); // #2 deleted: rows #1, #3, #4 live
+      await a.syncNow();
+      await b.syncNow();
+      expect((await storeB.allEntries()).map((e) => e.number), [1, 3, 4]);
+
+      final changes = await a.compactRefIds();
+      expect(changes.map((c) => '${c.refId} ${c.previousRefIds}'), ['MAS-0002 [MAS-0003]', 'MAS-0003 [MAS-0004]']);
+      expect((await storeA.allEntries()).map((e) => e.number), [1, 2, 3]);
+      expect(storeA.numberingEpoch, 1);
+
+      await b.syncNow();
+      final live = await storeB.allEntries();
+      expect(live.map((e) => '${e.refId} ${e.previousRefIds}'),
+          ['MAS-0001 []', 'MAS-0002 [MAS-0003]', 'MAS-0003 [MAS-0004]']);
+      expect((await storeB.entriesIncludingDeleted()).where((e) => e.deleted).map((e) => e.id), [made[1].id]);
+      expect(storeB.numberingEpoch, 1);
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('pending edit survives a renumber from another device', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final e57 = await groupAt57(a);
+      await b.syncNow();
+      apiB.online = false;
+      await b.updateEntry(e57.id, t('M2'), 'JM');
+      await a.compactRefIds(); // 57 → 7
+      apiB.online = true;
+      await b.syncNow();
+      final mine = (await storeB.entryById(e57.id))!;
+      expect([mine.refId, mine.data.toothType, mine.previousRefIds], ['MAS-0007', 'M2', ['MAS-0057']]);
+      final onServer = server.entries('db1').firstWhere((e) => e.id == e57.id);
+      expect([onServer.refId, onServer.data.toothType, onServer.version], ['MAS-0007', 'M2', 2]);
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('a tooth added offline to a group follows the group when it is renumbered', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final e57 = await groupAt57(a);
+      await b.syncNow();
+      apiB.online = false;
+      final added = (await b.addToGroup(e57.refId, e57.number, [t('M2')], 'JM')).single;
+      await a.compactRefIds(); // 57 → 7
+      apiB.online = true;
+      await b.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == added.id);
+      expect([up.refId, up.number, up.previousRefIds], ['MAS-0007', 7, ['MAS-0057']]);
+      expect((await storeB.entriesInGroup(7)).map((e) => e.data.toothType), ['M1', 'M2']);
+      expect(liveNumbers(), [1, 2, 3, 4, 5, 6, 7, 7]);
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('stale push refreshes numbers and retries', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final e57 = await groupAt57(a);
+      await b.syncNow();
+      apiB.online = false;
+      final added = (await b.addToGroup(e57.refId, e57.number, [t('M2')], 'JM')).single;
+      apiB.online = true;
+      apiB.onPush = (_) async {
+        apiB.onPush = null;
+        server.compact('db1'); // renumbered between this round's epoch check and its push
+      };
+      await b.syncNow();
+      expect((await storeB.entryById(added.id))!.refId, 'MAS-0007'); // followed the group, still pending
+      expect(b.status.value.pending, 1);
+      await b.syncNow();
+      expect(server.entries('db1').firstWhere((e) => e.id == added.id).refId, 'MAS-0007');
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('a claimed group whose push was cut off gets its current number after a compaction', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      final (b, _, _) = await computer('pc-b');
+      final made = [for (var i = 0; i < 8; i++) (await a.createEntries([t('M1')], 'AP')).single];
+      await a.deleteEntry(made[7].id, 'AP'); // #8 deleted, next number 9
+      await a.syncNow();
+      apiA.online = false;
+      await a.createEntries([t('M1'), t('M2')], 'AP', sharedId: true); // MAS-TEMP-1
+      apiA.online = true;
+      apiA.onPush = (_) async {
+        apiA.onPush = null;
+        throw const CloudOffline('dropped'); // claimed #9, then the connection went
+      };
+      await a.syncNow();
+      expect(server.claims.values.single.number, 9);
+      expect(a.status.value.connection, Connection.offline);
+      await b.compactRefIds(); // the pending claim 9 → 8
+      expect(server.claims.values.single.number, 8);
+      await a.syncNow();
+      final group = server.entries('db1').where((e) => e.number == 8 && !e.deleted).toList();
+      expect(group.map((e) => '${e.data.toothType} ${e.previousRefIds}'), ['M1 [MAS-TEMP-1]', 'M2 [MAS-TEMP-1]']);
+      expect(liveNumbers(), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
+      expect(server.nextNumber['db1'], 9);
+      expect((await storeA.entriesInGroup(8)).map((e) => e.previousRefIds), [
+        ['MAS-TEMP-1'],
+        ['MAS-TEMP-1']
+      ]);
+      expect([a.status.value.pending, a.status.value.conflicts], [0, 0]);
+    });
+
+    test('compactRefIds offline throws CloudOffline', () async {
+      final (a, _, apiA) = await computer('pc-a');
+      apiA.online = false;
+      await expectLater(a.compactRefIds(), throwsA(isA<CloudOffline>()));
+    });
+
+    group('phone', () {
+      Future<(SyncEngine, LocalStore, FakeCloudApi)> phone() async {
+        final api = FakeCloudApi(server);
+        final store = await LocalStore.inMemory(def);
+        await store.linkToCloud('db1', 'phone');
+        final engine = SyncEngine(store, api, allowOffline: false);
+        cleanup.add(() async {
+          await engine.dispose();
+          await store.close();
+        });
+        await engine.syncNow();
+        return (engine, store, api);
+      }
+
+      test('a stale push refreshes the numbers and goes through', () async {
+        final (a, _, _) = await computer('pc-a');
+        final e57 = await groupAt57(a);
+        final (engine, store, _) = await phone();
+        await a.compactRefIds(); // the phone has not seen it
+        final added = (await engine.addToGroup(e57.refId, e57.number, [t('M2')], 'AP')).single;
+        expect((await store.entryById(added.id))!.refId, 'MAS-0007'); // stored under the new number
+        expect(server.entries('db1').firstWhere((e) => e.id == added.id).refId, 'MAS-0007');
+        expect(await store.pendingEntries(), isEmpty);
+      });
+
+      test('a push that stays stale is not reported as saved', () async {
+        final (a, _, _) = await computer('pc-a');
+        final e57 = await groupAt57(a);
+        final (engine, store, api) = await phone();
+        api.onPush = (_) async => server.epoch['db1'] = server.epoch['db1']! + 1; // keeps moving
+        await expectLater(engine.addToGroup(e57.refId, e57.number, [t('M2')], 'AP'), throwsA(isA<CloudDenied>()));
+        expect(server.entries('db1').where((e) => e.data.toothType == 'M2'), isEmpty);
+        expect(await store.pendingEntries(), isEmpty); // the add was undone, like any refused add
+      });
     });
   });
 }
