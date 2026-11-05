@@ -50,6 +50,9 @@ class FakeCloudServer {
       if (live[i] != i + 1) map[live[i]] = i + 1;
     }
     nextNumber[db] = live.length + 1;
+    // A claim neither pending nor at a live number is dead: a re-claim must not get a number that may now
+    // be another specimen's.
+    claims.removeWhere((k, c) => k.$1 == db && !live.contains(c.number));
     if (map.isEmpty) return (epoch: epoch[db] ?? 0, changes: const []);
     final changes = <NumberChange>[];
     for (final e in entries(db)) {

@@ -145,6 +145,26 @@ begin
   delete from public.temp_claims where database_id = db and device_id = 'pc' and temp_number = 4;
   set local role authenticated;
 
+  -- A claim whose uploaded entry was deleted (no live row at its number, not pending) is dead:
+  -- compaction deletes it, so a re-claim takes a new number.
+  reset role;
+  select next_number into n2 from public.databases where id = db;
+  insert into public.entries (id, database_id, number, ref_id, element_id, deleted)
+  values (gen_random_uuid(), db, n2, public._ref('T-', 4, n2), 'rib', true) returning id into id1;
+  insert into public.temp_claims (database_id, device_id, temp_number, number, ids)
+  values (db, 'pc', 5, n2, array[id1, gen_random_uuid()]);
+  update public.databases set next_number = n2 + 1 where id = db;
+  set local role authenticated;
+  r := public.compact_ref_ids(db);
+  select count(*) into n from public.temp_claims c where c.database_id = db and c.device_id = 'pc' and c.temp_number = 5;
+  log := log || case when n = 0 then 'PASS compaction deletes a claim whose entries are gone from its number'
+                     else 'FAIL a dead claim survived compaction' end;
+  reset role;
+  delete from public.entries where id = id1;
+  delete from public.temp_claims where database_id = db and device_id = 'pc' and temp_number = 5;
+  update public.databases set next_number = n2 where id = db;
+  set local role authenticated;
+
   -- Numbers 1..10; #3 and #10 deleted; compaction gives 1..8, then offline claims get 9 and 10.
   perform public.create_entries(db, '[{"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"},
     {"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"}]', 'OWN');

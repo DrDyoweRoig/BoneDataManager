@@ -86,6 +86,7 @@ declare
   dg        int;
   cur_epoch int;
   k         int;
+  lv        int[];
   olds      int[];
   news      int[];
   changes   jsonb;
@@ -103,6 +104,8 @@ begin
   -- own number (a claim without ids: no entry holds its number). A pending claim stays live even if a
   -- deleted row has its number, or its ids are deleted rows kept under an older number. Every claim is
   -- renumbered with the same map below, so an uploaded group's claim keeps matching its rows.
+  -- A claim that is neither pending nor at a live number is dead and is deleted: a re-claim then takes
+  -- a new number instead of one compaction may give to another specimen.
   with live as (
     select x.number from public.entries x where x.database_id = db and not x.deleted
     union
@@ -117,12 +120,14 @@ begin
     select l.number as old_n, (row_number() over (order by l.number))::int as new_n from live l
   )
   select count(*)::int,
+         coalesce(array_agg(m.old_n order by m.old_n), '{}'),
          coalesce(array_agg(m.old_n order by m.old_n) filter (where m.old_n <> m.new_n), '{}'),
          coalesce(array_agg(m.new_n order by m.old_n) filter (where m.old_n <> m.new_n), '{}')
-  into k, olds, news
+  into k, lv, olds, news
   from m;
 
   update public.databases d set next_number = k + 1 where d.id = db;
+  delete from public.temp_claims c where c.database_id = db and not (c.number = any (lv));
 
   if cardinality(olds) = 0 then
     return jsonb_build_object('epoch', cur_epoch, 'changes', '[]'::jsonb);

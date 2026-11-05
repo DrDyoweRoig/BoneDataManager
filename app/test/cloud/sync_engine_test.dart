@@ -826,6 +826,34 @@ void main() {
       expect(server.entries('db1').map((e) => '${e.number} ${e.data.toothType}'), ['1 M1', '2 M2']);
     });
 
+    test('half of a TEMP group uploaded, that half deleted elsewhere, compaction: the rest gets a new number', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      final (b, _, _) = await computer('pc-b');
+      await a.createEntries([t('M1')], 'AP'); // #1
+      await a.createEntries([t('M1')], 'AP'); // #2
+      apiA.online = false;
+      final group = await a.createEntries([t('M1'), t('M2')], 'AP', sharedId: true); // MAS-TEMP-1
+      apiA.online = true;
+      apiA.onPush = (e) async {
+        if (e.id == group[1].id) throw const CloudDenied('refused');
+      };
+      await a.syncNow(); // claims #3; M1 goes up, M2 is refused
+      apiA.onPush = null;
+      expect(server.entries('db1').where((e) => e.number == 3).map((e) => e.id), [group[0].id]);
+      await b.syncNow();
+      await b.deleteEntry(group[0].id, 'JM'); // the uploaded half is deleted elsewhere
+      final other = (await b.createEntries([t('M1')], 'JM')).single; // #4, another specimen
+      await b.syncNow();
+      await b.compactRefIds(); // #4 → 3: the claim's old number now belongs to another specimen
+      expect(server.entries('db1').where((e) => e.number == 3 && !e.deleted).map((e) => e.id), [other.id]);
+      await a.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == group[1].id);
+      expect(up.number, 4);
+      expect(server.entries('db1').where((e) => e.number == 3 && !e.deleted).map((e) => e.id), [other.id]);
+      expect((await storeA.entryById(group[1].id))!.refId, 'MAS-0004');
+      expect([a.status.value.pending, a.status.value.conflicts], [0, 0]);
+    });
+
     test('compactRefIds offline throws CloudOffline', () async {
       final (a, _, apiA) = await computer('pc-a');
       apiA.online = false;
