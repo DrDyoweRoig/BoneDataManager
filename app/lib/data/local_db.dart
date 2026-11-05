@@ -122,6 +122,9 @@ class LocalDb extends _$LocalDb {
               await m.addColumn(meta, meta.numberingEpoch);
               if (from >= 3) await m.addColumn(entries, entries.previousRefIds);
               await _convertBlockRowsToProvisional();
+              // drift writes the version after onUpgrade, outside this transaction; do it inside too so a
+              // crash between commit and that write can't leave a converted file at v3.
+              await customStatement('PRAGMA user_version = 4');
             });
           }
         },

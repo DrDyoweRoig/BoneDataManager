@@ -170,8 +170,15 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
-  test('v3 → v4 is atomic: a failure midway leaves the v3 file untouched and re-openable', () async {
+  test('v3 → v4 is atomic: a failure midway leaves the v3 file untouched, and it upgrades once fixed', () async {
     final tmp = await Directory.systemTemp.createTemp('bdm_mig');
+    addTearDown(() async {
+      try {
+        await tmp.delete(recursive: true); // a failed open may still hold the file on Windows
+      } on FileSystemException {
+        // temp dir; fine to leave
+      }
+    });
     final f = File('${tmp.path}/v3.sqlite');
     // A live synced femur-left row already at -2: converting c (#8) to -2 violates the unique index,
     // after group #7 has already been converted.
@@ -179,9 +186,10 @@ void main() {
         "1761300000, 'AP', 1761300000, 1, 0, 'synced', 1)";
     await writeV3File(f, cloud: true, extra: [clash]);
 
-    await expectLater(LocalStore.open(f), throwsA(anything));
+    await expectLater(LocalStore.open(f), throwsA(isA<SqliteException>()));
 
     final raw = NativeDatabase(f);
+    addTearDown(raw.close);
     await raw.ensureOpen(_NoUser(3));
     final version = await raw.runSelect('PRAGMA user_version', []);
     expect(version.single.values.single, 3);
@@ -190,11 +198,17 @@ void main() {
     final rows = await raw.runSelect("SELECT number, ref_id FROM entries WHERE id IN ('a','b')", []);
     expect(rows.map((r) => r['number']), [7, 7]);
     expect(rows.map((r) => r['ref_id']), ['HOL0007', 'HOL0007']);
+
+    // Remove the clash: the same file now upgrades cleanly (no duplicate-column failure).
+    await raw.runCustom("DELETE FROM entries WHERE id = 'x'");
     await raw.close();
-    try {
-      await tmp.delete(recursive: true); // the failed open may still hold the file on Windows
-    } on FileSystemException {
-      // temp dir; fine to leave
-    }
+    final s = await LocalStore.open(f);
+    addTearDown(s.close);
+    final byId = {for (final e in await s.allEntries()) e.id: e};
+    expect([byId['a']!.number, byId['b']!.number, byId['c']!.number], [-1, -1, -2]);
+    final check = NativeDatabase(f);
+    addTearDown(check.close);
+    await check.ensureOpen(_NoUser(4));
+    expect((await check.runSelect('PRAGMA user_version', [])).single.values.single, 4);
   });
 }
