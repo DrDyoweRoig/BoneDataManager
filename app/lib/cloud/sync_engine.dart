@@ -313,7 +313,13 @@ class SyncEngine implements EntryWriter {
     final temps = {for (final e in pending) if (e.number < 0) e.number}.toList()..sort((a, b) => b.compareTo(a));
     for (final temp in temps) {
       if (_disposed) return (pushed, problem);
-      final group = [for (final e in await store.entriesIncludingDeleted()) if (e.number == temp) e.id];
+      final rows = [for (final e in await store.entriesIncludingDeleted()) if (e.number == temp) e];
+      final group = [for (final e in rows) e.id];
+      // Created and deleted here before it ever went up: nothing to number, so no number is spent.
+      if (rows.every((e) => e.deleted) && await _neverUploaded(group)) {
+        await store.discardNew(group);
+        continue;
+      }
       final int n;
       try {
         n = await api.claimNumber(_db, store.deviceId!, -temp, group,
@@ -346,6 +352,13 @@ class SyncEngine implements EntryWriter {
       if (await push(e, e) == null) break;
     }
     return (pushed, problem);
+  }
+
+  Future<bool> _neverUploaded(List<String> ids) async {
+    for (final id in ids) {
+      if (await store.baseVersion(id) != 0) return false;
+    }
+    return true;
   }
 
   /// One full round: definition, numbering, push, pull. Calls made while a round runs are

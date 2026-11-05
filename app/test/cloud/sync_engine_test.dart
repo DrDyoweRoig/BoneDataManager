@@ -881,6 +881,22 @@ void main() {
       expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
     });
 
+    test('a TEMP group created and deleted offline is dropped on sync and claims no number', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      apiA.online = false;
+      final gone = await a.createEntries([t('M1'), t('M2')], 'AP', sharedId: true);
+      for (final e in gone) {
+        await a.deleteEntry(e.id, 'AP');
+      }
+      final kept = (await a.createEntries([t('M1')], 'AP')).single; // MAS-TEMP-2
+      apiA.online = true;
+      await a.syncNow();
+      expect(server.claims.length, 1);
+      expect(server.entries('db1').map((e) => '${e.id} ${e.number}'), ['${kept.id} 1']); // no gap
+      expect(await storeA.entriesIncludingDeleted(), hasLength(1));
+      expect([a.status.value.pending, a.status.value.conflicts], [0, 0]);
+    });
+
     test('compactRefIds offline throws CloudOffline', () async {
       final (a, _, apiA) = await computer('pc-a');
       apiA.online = false;
