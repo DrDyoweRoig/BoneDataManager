@@ -402,6 +402,10 @@ class LocalStore implements EntryWriter {
   Future<void> unlinkFromCloud() => _db.transaction(() async {
         // Pending TEMP groups become real numbers now: nobody else will ever number them.
         var next = (await _db.select(_db.meta).getSingle()).nextNumber;
+        // Server-numbered rows (pulled) never advanced the local counter.
+        final top = await _db.customSelect('SELECT MAX(number) AS m FROM entries').getSingle();
+        final maxNumber = top.data['m'] as int?;
+        if (maxNumber != null && maxNumber >= next) next = maxNumber + 1;
         final temps = await (_db.select(_db.entries)..where((e) => e.number.isSmallerThanValue(0))).get();
         final groups = {for (final t in temps) t.number}.toList()..sort((a, b) => b.compareTo(a));
         final changes = <NumberChange>[];

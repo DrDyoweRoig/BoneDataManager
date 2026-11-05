@@ -70,6 +70,31 @@ void main() {
     expect([ea.previousRefIds, eb.previousRefIds], [['MAS-0001'], ['MAS-0002']]);
   });
 
+  test('unlinking numbers after the highest pulled number, not the local counter', () async {
+    await store.linkToCloud('cloud', 'pc');
+    for (var n = 41; n <= 43; n++) {
+      await store.insertSynced([
+        Entry(
+            id: 's$n',
+            number: n,
+            refId: 'MAS-00$n',
+            data: tooth('M1'),
+            createdBy: 'JM',
+            createdAt: DateTime.utc(2026),
+            modifiedBy: 'JM',
+            modifiedAt: DateTime.utc(2026),
+            version: 1)
+      ]);
+    }
+    await store.deleteEntry('s43', 'AP');
+    await store.createProvisional([tooth('M2')], 'AP');
+    await store.unlinkFromCloud();
+    final temp = (await store.allEntries()).firstWhere((e) => e.previousRefIds.isNotEmpty);
+    expect([temp.number, temp.refId], [44, 'MAS-0044']);
+    expect(store.nextNumber, 45);
+    expect((await store.createEntries([tooth('C')], 'AP')).single.refId, 'MAS-0045');
+  });
+
   test('unlinking numbers pending TEMP groups from nextNumber and clears the epoch', () async {
     await store.linkToCloud('cloud', 'pc');
     await store.createEntries([tooth('C')], 'AP'); // #1, so nextNumber is 2
