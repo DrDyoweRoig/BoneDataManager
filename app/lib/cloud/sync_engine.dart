@@ -76,6 +76,10 @@ class SyncEngine implements EntryWriter {
   StreamSubscription<void>? _remote;
   Timer? _timer;
   bool _offline = false;
+
+  /// Some rows could not take the server's number yet (their place is held by a row in conflict), or the
+  /// app just started: take the server's numbering again on the next round.
+  bool _numbersBehind = true;
   Future<void>? _running;
 
   /// Callers that asked while a round was running; they wait for the next round, not the old one.
@@ -233,51 +237,27 @@ class SyncEngine implements EntryWriter {
     }
   }
 
-  /// Owner only, needs a connection: closes the gaps in the Ref IDs on the server, renumbers this copy
-  /// the same way, then syncs. Returns the rows that changed.
+  /// Owner only, needs a connection: closes the gaps in the Ref IDs on the server, then takes the
+  /// server's numbering (also any earlier one this copy had missed) and syncs. Returns the rows that changed.
   Future<List<NumberChange>> compactRefIds() async {
     final r = await api.compactRefIds(_db);
-    await _applyNumbers(r.changes, r.epoch);
+    await _refreshNumbers();
     await _publish();
     await syncNow();
     return r.changes;
   }
 
-  /// Applies the server's [changes] (the epoch [epoch] numbering) to this copy. Rows not uploaded yet
-  /// that sit under a moved number (a tooth added offline to that group) move with their group.
-  /// Pending edits and versions are kept: the number belongs to the server, the values to the editor.
-  Future<void> _applyNumbers(List<NumberChange> changes, int epoch) async {
-    final local = {for (final e in await store.entriesIncludingDeleted()) e.id: e};
-    final moved = <int, int>{};
-    for (final c in changes) {
-      final l = local[c.id];
-      if (l != null && l.number > 0 && l.number != c.number) moved[l.number] = c.number;
-    }
-    final changed = {for (final c in changes) c.id};
-    final followers = <NumberChange>[];
-    for (final l in local.values) {
-      final n = moved[l.number];
-      if (n == null || l.deleted || changed.contains(l.id) || await store.baseVersion(l.id) != 0) continue;
-      followers.add((
-        id: l.id,
-        number: n,
-        refId: formatRefId(store.def.prefix, store.def.digits, n),
-        previousRefIds: [...l.previousRefIds, l.refId],
-      ));
-    }
-    await store.applyNumbering([...changes, ...followers], epoch: epoch);
-  }
-
-  /// Takes the server's current numbering: every row whose number or Ref IDs differ here is rewritten.
+  /// Takes the server's current numbering. Deletions made on the server come in first, so a number
+  /// they freed can be taken here by the row compaction moved onto it; a deleted row with a pending
+  /// edit here becomes a conflict instead.
   Future<void> _refreshNumbers() async {
     final epoch = await api.numberingEpoch(_db); // before the rows: a later compaction is caught next round
-    final local = {for (final e in await store.entriesIncludingDeleted()) e.id: e};
-    final changes = [
-      for (final s in await api.currentNumbers(_db))
-        if (local[s.id] case final l?)
-          if (l.number != s.number || l.refId != s.refId || !listEquals(l.previousRefIds, s.previousRefIds)) s
-    ];
-    await _applyNumbers(changes, epoch);
+    for (final (e, _) in await api.changesSince(_db, await store.lastPull())) {
+      if (!e.deleted || await store.entryById(e.id) == null) continue;
+      if (!await store.applyRemote(e) && e.version > await store.baseVersion(e.id)) await store.addConflict(e);
+    }
+    final skipped = await store.applyServerNumbering(await api.currentNumbers(_db), epoch);
+    _numbersBehind = skipped.isNotEmpty;
   }
 
   /// [e] as uploaded under real number [n]: its TEMP Ref ID goes to previousRefIds.
@@ -334,7 +314,8 @@ class SyncEngine implements EntryWriter {
       final group = [for (final e in await store.entriesIncludingDeleted()) if (e.number == temp) e.id];
       final int n;
       try {
-        n = await api.claimNumber(_db, store.deviceId!, -temp, group);
+        n = await api.claimNumber(_db, store.deviceId!, -temp, group,
+            tempRef: provisionalRefId(store.def.prefix, -temp));
       } on CloudDenied catch (err) {
         problem = err.message;
         continue;
@@ -399,8 +380,9 @@ class SyncEngine implements EntryWriter {
         onDefinitionChanged?.call();
       }
 
-      // The Ref IDs were compacted elsewhere: follow the new numbers before uploading anything.
-      if (await api.numberingEpoch(_db) != store.numberingEpoch) await _refreshNumbers();
+      // The Ref IDs were compacted elsewhere (or some rows are still behind): follow the server's numbers
+      // before uploading anything.
+      if (_numbersBehind || await api.numberingEpoch(_db) != store.numberingEpoch) await _refreshNumbers();
 
       final (pushed, refused) = await _pushPending();
       problem = refused;
@@ -445,6 +427,7 @@ class SyncEngine implements EntryWriter {
     final c = (await store.conflicts()).firstWhere((c) => c.mine.id == entryId);
     if (c.mine.id != c.server.id) {
       await _resolveDuplicate(c.mine, c.server, keepMine: keepMine);
+      _numbersBehind = true;
       await _publish();
       return;
     }
@@ -464,6 +447,7 @@ class SyncEngine implements EntryWriter {
       await store.applyRemote(c.server, force: true);
       await store.removeConflict(entryId);
     }
+    _numbersBehind = true; // a row waiting for this one's place can move now
     await _publish();
   }
 

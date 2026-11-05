@@ -92,6 +92,31 @@ begin
     log := log || 'PASS a new entry with an unclaimed number is refused'::text;
   end;
 
+  -- A number held only by a deleted row (never claimed) is not a Ref ID a new row can join.
+  reset role;
+  insert into public.entries (id, database_id, number, ref_id, element_id, deleted)
+  values (gen_random_uuid(), db, 500, 'T-0500', 'rib', true);
+  set local role authenticated;
+  begin
+    perform public.push_entry(db, jsonb_build_object('id', gen_random_uuid(), 'number', 500, 'ref_id', 'T-0500',
+              'element_id', 'radius', 'created_at', now(), 'modified_at', now()), 0, 1);
+    log := log || 'FAIL a new entry joined a number held only by a deleted row'::text;
+  exception when invalid_parameter_value then
+    log := log || 'PASS a new entry cannot join a number held only by a deleted row'::text;
+  end;
+  reset role;
+  delete from public.entries where database_id = db and number = 500;
+  set local role authenticated;
+
+  -- A claim for an uploaded entry adds the TEMP Ref ID to it once, without a new version.
+  select id into id1 from public.entries where database_id = db and number = 1;
+  n := public.claim_number(db, 'pc', 3, array[id1], 'T-TEMP-3');
+  n2 := public.claim_number(db, 'pc-other', 3, array[id1], 'T-TEMP-3');
+  select count(*) into n2 from public.entries
+  where id = id1 and previous_ref_ids = '["T-TEMP-3"]' and version = 1;
+  log := log || case when n = 1 and n2 = 1 then 'PASS a claim keeps the TEMP Ref ID on an uploaded entry'
+                     else 'FAIL TEMP Ref ID on an uploaded entry: number ' || n || ', rows ' || n2 end;
+
   -- Numbers 1..10; #3 and #10 deleted; compaction gives 1..8, then offline claims get 9 and 10.
   perform public.create_entries(db, '[{"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"},
     {"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"}]', 'OWN');

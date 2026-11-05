@@ -59,6 +59,9 @@ class Entry {
 /// A Ref ID change applied to one entry (compaction or promoting a provisional number).
 typedef NumberChange = ({String id, int number, String refId, List<String> previousRefIds});
 
+/// A row's numbering as the server holds it now.
+typedef ServerNumber = ({String id, int number, String refId, List<String> previousRefIds, bool deleted});
+
 String elementName(EntryDraft d) => d.elementId == kTeethId ? 'Tooth' : boneById(d.elementId).name;
 
 Region elementRegion(EntryDraft d) => d.elementId == kTeethId ? Region.teeth : boneById(d.elementId).region;

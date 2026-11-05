@@ -70,13 +70,14 @@ abstract class CloudApi {
       {required List<String> ids, bool sharedId = false});
 
   /// The real number for provisional group [provisional] of [device]. [ids] are the group's entry ids;
-  /// asking again returns the same number.
-  Future<int> claimNumber(String db, String device, int provisional, List<String> ids);
+  /// asking again returns the same number. When some of them are already on the server (a lost answer)
+  /// their number is reused and [tempRef], the group's TEMP Ref ID, is added to their Previous Ref IDs.
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids, {String? tempRef});
 
   Future<int> numberingEpoch(String db);
 
-  /// Every row's current number and Ref IDs (deleted rows too), paged like [changesSince].
-  Future<List<NumberChange>> currentNumbers(String db);
+  /// Every row's current number and Ref IDs, and whether it is deleted (deleted rows too).
+  Future<List<ServerNumber>> currentNumbers(String db);
 
   /// Owner only: close the gaps in the Ref IDs. Returns the new epoch and the rows that changed.
   Future<({int epoch, List<NumberChange> changes})> compactRefIds(String db);

@@ -60,6 +60,30 @@ void main() {
     expect(again.changes, isEmpty);
   });
 
+  test('a new row cannot join a number held only by a deleted row', () async {
+    server.put('db', _e('gone', 4, deleted: true));
+    expect(() => api.pushEntry('db', _e('new', 4), baseVersion: 0, epoch: 0), throwsStateError);
+    server.put('db', _e('live', 5));
+    expect(await api.pushEntry('db', _e('joins', 5), baseVersion: 0, epoch: 0), isA<PushOk>());
+  });
+
+  test('a claim for uploaded rows adds the TEMP Ref ID to them once, without a new version', () async {
+    server.put('db', _e('a', 7));
+    final before = server.rows['db']!['a']!.$2;
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b'], tempRef: 'X-TEMP-1'), 7);
+    final (row, at) = server.rows['db']!['a']!;
+    expect([row.previousRefIds, row.version], [['X-TEMP-1'], 1]);
+    expect(at.isAfter(before), isTrue);
+    await api.claimNumber('db', 'dev2', 1, ['a'], tempRef: 'X-TEMP-1');
+    expect(server.rows['db']!['a']!.$1.previousRefIds, ['X-TEMP-1']);
+  });
+
+  test('current numbers say which rows are deleted', () async {
+    server.put('db', _e('a', 1));
+    server.put('db', _e('b', 2, deleted: true));
+    expect([for (final r in await api.currentNumbers('db')) '${r.id} ${r.deleted}'], ['a false', 'b true']);
+  });
+
   test('only the owner compacts', () async {
     await expectLater(FakeCloudApi(server, email: 'e@x.com').compactRefIds('db'), throwsA(isA<CloudDenied>()));
   });

@@ -137,8 +137,9 @@ class SupabaseCloudApi implements CloudApi {
       );
 
   @override
-  Future<int> claimNumber(String db, String device, int provisional, List<String> ids) => _call(() async =>
-      (await client.rpc('claim_number', params: {'db': db, 'device': device, 'temp': provisional, 'ids': ids}) as num)
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids, {String? tempRef}) =>
+      _call(() async => (await client.rpc('claim_number',
+              params: {'db': db, 'device': device, 'temp': provisional, 'ids': ids, 'temp_ref': tempRef}) as num)
           .toInt());
 
   @override
@@ -148,17 +149,24 @@ class SupabaseCloudApi implements CloudApi {
       });
 
   @override
-  Future<List<NumberChange>> currentNumbers(String db) => _call(() async {
-        final out = <NumberChange>[];
+  Future<List<ServerNumber>> currentNumbers(String db) => _call(() async {
+        final out = <ServerNumber>[];
         for (var from = 0;; from += _page) {
           final rows = await client
               .from('entries')
-              .select('id, number, ref_id, previous_ref_ids')
+              .select('id, number, ref_id, previous_ref_ids, deleted')
               .eq('database_id', db)
               .order('id')
               .range(from, from + _page - 1);
           for (final r in rows) {
-            out.add(_numberChange(r));
+            final c = _numberChange(r);
+            out.add((
+              id: c.id,
+              number: c.number,
+              refId: c.refId,
+              previousRefIds: c.previousRefIds,
+              deleted: r['deleted'] as bool? ?? false,
+            ));
           }
           if (rows.length < _page) return out;
         }

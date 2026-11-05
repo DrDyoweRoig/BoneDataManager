@@ -546,8 +546,10 @@ void main() {
       expect(server.nextNumber['db1'], 2);
       await a.syncNow();
       expect(server.nextNumber['db1'], 2); // no number spent twice
-      expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
-      expect((await storeA.allEntries()).map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
+      expect(server.entries('db1').map((e) => '${e.refId} ${e.previousRefIds}'),
+          ['MAS-0001 [MAS-TEMP-1]', 'MAS-0001 [MAS-TEMP-1]']); // the TEMP the user saw is kept
+      expect((await storeA.allEntries()).map((e) => '${e.refId} ${e.previousRefIds}'),
+          ['MAS-0001 [MAS-TEMP-1]', 'MAS-0001 [MAS-TEMP-1]']);
       expect(a.status.value.conflicts, 0);
       expect(await storeA.pendingEntries(), isEmpty);
     });
@@ -657,6 +659,111 @@ void main() {
         ['MAS-TEMP-1']
       ]);
       expect([a.status.value.pending, a.status.value.conflicts], [0, 0]);
+    });
+
+    test('lost create, a tooth added offline to its TEMP group and a compaction elsewhere: one number', () async {
+      final (a, storeA, apiA) = await computer('pc-a');
+      final (b, _, _) = await computer('pc-b');
+      final gap = (await b.createEntries([t('M1')], 'JM')).single;
+      await b.deleteEntry(gap.id, 'JM'); // #1 deleted: the lost rows' #2 will move to #1
+      await b.syncNow();
+      apiA.dropNextResponse = true;
+      final made = await a.createEntries([t('M1'), t('M2')], 'AP', sharedId: true); // on the server as #2
+      apiA.online = false;
+      await a.addToGroup(made.first.refId, made.first.number, [t('M3')], 'AP');
+      await b.compactRefIds(); // 2 → 1
+      apiA.online = true;
+      await a.syncNow();
+      final live = server.entries('db1').where((e) => !e.deleted).toList();
+      expect(live.map((e) => '${e.refId} ${e.data.toothType} ${e.previousRefIds}'), unorderedEquals([
+        'MAS-0001 M1 [MAS-0002, MAS-TEMP-1]',
+        'MAS-0001 M2 [MAS-0002, MAS-TEMP-1]',
+        'MAS-0001 M3 [MAS-TEMP-1]',
+      ]));
+      expect(server.nextNumber['db1'], 2);
+      expect((await storeA.allEntries()).map((e) => e.refId), ['MAS-0001', 'MAS-0001', 'MAS-0001']);
+      expect([a.status.value.pending, a.status.value.conflicts], [0, 0]);
+    });
+
+    test('a delete then Close gaps on another PC: a PC that is behind keeps syncing', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, _) = await computer('pc-b');
+      final made = [for (var i = 0; i < 6; i++) (await a.createEntries([left], 'AP')).single];
+      await b.syncNow();
+      await a.deleteEntry(made[4].id, 'AP'); // #5 femur L deleted; B has not pulled it
+      await a.syncNow();
+      await a.compactRefIds(); // #6 femur L → 5
+      await b.syncNow();
+      expect(b.problem.value, isNull);
+      expect((await storeB.allEntries()).map((e) => '${e.refId} ${e.previousRefIds}'),
+          ['MAS-0001 []', 'MAS-0002 []', 'MAS-0003 []', 'MAS-0004 []', 'MAS-0005 [MAS-0006]']);
+      expect((await storeB.entryById(made[4].id))!.deleted, isTrue);
+      expect((await storeB.entryById(made[5].id))!.number, 5);
+      expect(storeB.numberingEpoch, server.epoch['db1']);
+      await b.compactRefIds(); // nothing left to close; must not fail either
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('a delete then Close gaps elsewhere while this PC edits the deleted row: a conflict, sync goes on', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final made = [for (var i = 0; i < 6; i++) (await a.createEntries([left], 'AP')).single];
+      await b.syncNow();
+      apiB.online = false;
+      await b.updateEntry(made[4].id, const EntryDraft(elementId: 'femur', side: Side.left, values: {'n': 1}), 'JM');
+      await a.deleteEntry(made[4].id, 'AP');
+      await a.syncNow();
+      await a.compactRefIds(); // #6 femur L → 5, where B's edited row still is
+      final c = await a.createEntries([right], 'AP'); // something else to pull
+      apiB.online = true;
+      await b.syncNow();
+      expect(b.problem.value, isNull);
+      expect((await storeB.entryById(c.single.id)), isNotNull); // the pull was reached
+      final conflict = (await storeB.conflicts()).single;
+      expect([conflict.mine.id, conflict.server.id, conflict.server.deleted], [made[4].id, made[4].id, true]);
+      expect((await storeB.entryById(made[5].id))!.number, 6); // waits until the conflict is settled
+      await b.resolve(made[4].id, keepMine: false);
+      await b.syncNow();
+      expect((await storeB.entryById(made[5].id))!.number, 5);
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('a tooth added offline to a specimen deleted elsewhere gets its own number', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final made = [for (var i = 0; i < 8; i++) (await a.createEntries([t('M1')], 'AP')).single];
+      await b.syncNow();
+      apiB.online = false;
+      final added = (await b.addToGroup(made[6].refId, made[6].number, [t('M2')], 'JM')).single; // to #7
+      await a.deleteEntry(made[6].id, 'AP'); // specimen #7 is gone
+      await a.syncNow();
+      await a.compactRefIds(); // old #8 → 7
+      apiB.online = true;
+      await b.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == added.id);
+      expect([up.refId, up.previousRefIds], ['MAS-0008', ['MAS-0007', 'MAS-TEMP-1']]);
+      expect(server.entries('db1').where((e) => e.number == 7 && !e.deleted).map((e) => e.id), [made[7].id]);
+      expect(server.nextNumber['db1'], 9);
+      expect((await storeB.entryById(added.id))!.refId, 'MAS-0008');
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
+    test('compacting from a PC that had missed an earlier compaction leaves it on the server numbers', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final e57 = await groupAt57(a);
+      await b.syncNow();
+      apiB.online = false;
+      final added = (await b.addToGroup(e57.refId, e57.number, [t('M2')], 'JM')).single;
+      apiB.online = true;
+      await a.compactRefIds(); // 57 → 7; B has not synced
+      final changes = await b.compactRefIds(); // no gaps left
+      expect(changes, isEmpty);
+      expect(b.problem.value, isNull);
+      expect((await storeB.entryById(e57.id))!.refId, 'MAS-0007');
+      expect(server.entries('db1').firstWhere((e) => e.id == added.id).refId, 'MAS-0007');
+      expect(storeB.numberingEpoch, 1);
+      expect(b.status.value.pending, 0);
     });
 
     test('compactRefIds offline throws CloudOffline', () async {

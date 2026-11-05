@@ -136,7 +136,24 @@ void main() {
     test('claim_number sends the group ids and returns the number', () async {
       response = 17;
       expect(await api.claimNumber('db', 'dev', -1, ['a', 'b']), 17);
-      expect(body(0), {'db': 'db', 'device': 'dev', 'temp': -1, 'ids': ['a', 'b']});
+      expect(body(0), {'db': 'db', 'device': 'dev', 'temp': -1, 'ids': ['a', 'b'], 'temp_ref': null});
+    });
+
+    test('claim_number sends the TEMP Ref ID', () async {
+      response = 3;
+      await api.claimNumber('db', 'dev', 1, ['a'], tempRef: 'X-TEMP-1');
+      expect(body(0)['temp_ref'], 'X-TEMP-1');
+    });
+
+    test('current numbers include whether the row is deleted', () async {
+      response = [
+        {'id': 'a', 'number': 1, 'ref_id': 'X-1', 'previous_ref_ids': ['X-2'], 'deleted': false},
+        {'id': 'b', 'number': 2, 'ref_id': 'X-2', 'previous_ref_ids': [], 'deleted': true},
+      ];
+      final r = await api.currentNumbers('db');
+      expect([for (final c in r) '${c.id} ${c.number} ${c.refId} ${c.previousRefIds} ${c.deleted}'],
+          ['a 1 X-1 [X-2] false', 'b 2 X-2 [] true']);
+      expect(requests.single.url.query, contains('deleted'));
     });
 
     test('compact_ref_ids maps epoch and changes', () async {

@@ -31,8 +31,10 @@ drop table if exists public.id_blocks;
 -- ───────────────────────── Functions (RPC) ─────────────────────────
 
 -- The real number for provisional group `temp` of `device`. `ids` are the group's entry ids: if one of
--- them already reached the server (an online create whose answer was lost), its number is reused.
-create or replace function public.claim_number(db uuid, device text, temp int, ids uuid[])
+-- them already reached the server (an online create whose answer was lost), its number is reused and
+-- `temp_ref` (the TEMP Ref ID the user saw) is added to those rows' previous_ref_ids, so no ID is lost.
+drop function if exists public.claim_number(uuid, text, int, uuid[]);
+create or replace function public.claim_number(db uuid, device text, temp int, ids uuid[], temp_ref text default null)
 returns int language plpgsql security definer set search_path = public as $$
 declare
   n int;
@@ -55,6 +57,11 @@ begin
     update public.databases d set next_number = d.next_number + 1
     where d.id = db
     returning d.next_number - 1 into n;
+  elsif temp_ref is not null then
+    -- Bumps updated_at (devices pull it) but not version (no conflict with pending edits).
+    update public.entries x
+    set previous_ref_ids = x.previous_ref_ids || jsonb_build_array(temp_ref), updated_at = now()
+    where x.database_id = db and x.id = any (claim_number.ids) and not (x.previous_ref_ids ? temp_ref);
   end if;
 
   insert into public.temp_claims (database_id, device_id, temp_number, number, ids)
@@ -192,7 +199,7 @@ end $$;
 
 -- push_entry gains `epoch`: the numbering_epoch the device knows. The old 3-argument version is
 -- removed on purpose, so an outdated app cannot upload numbers that may have changed.
--- New id: inserted if its number was claimed (temp_claims) or joins an existing Ref ID; if numbers
+-- New id: inserted if its number was claimed (temp_claims) or joins a live Ref ID; if numbers
 -- changed since the device's epoch, returns {"status": "stale"} so the device renumbers and retries.
 -- Existing id: as before; an update never touches number, ref_id or previous_ref_ids.
 drop function if exists public.push_entry(uuid, jsonb, int);
@@ -215,9 +222,11 @@ begin
     if epoch is distinct from cur_epoch then
       return jsonb_build_object('status', 'stale');
     end if;
-    -- A new row's number was claimed, or it joins an existing (shared) Ref ID.
+    -- A new row's number was claimed, or it joins an existing (shared) Ref ID that is still live: a
+    -- number held only by deleted rows may be reused by compaction for another specimen.
     if not exists (select 1 from public.temp_claims c where c.database_id = db and c.number = num)
-       and not exists (select 1 from public.entries x where x.database_id = db and x.number = num) then
+       and not exists (select 1 from public.entries x where x.database_id = db and x.number = num
+                       and not x.deleted) then
       raise exception 'Number % was not claimed', num using errcode = '22023';
     end if;
     begin
@@ -282,9 +291,9 @@ begin
 end $$;
 
 -- Only signed-in users may call the functions.
-revoke execute on function public.claim_number(uuid, text, int, uuid[]), public.compact_ref_ids(uuid),
+revoke execute on function public.claim_number(uuid, text, int, uuid[], text), public.compact_ref_ids(uuid),
   public.push_entry(uuid, jsonb, int, int) from public, anon;
-grant execute on function public.claim_number(uuid, text, int, uuid[]), public.compact_ref_ids(uuid),
+grant execute on function public.claim_number(uuid, text, int, uuid[], text), public.compact_ref_ids(uuid),
   public.push_entry(uuid, jsonb, int, int) to authenticated;
 
 -- The app expects this setup.

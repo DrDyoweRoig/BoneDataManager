@@ -142,7 +142,7 @@ class FakeCloudApi implements CloudApi {
     if (!online) throw const CloudOffline('fake offline');
   }
 
-  Entry _with(Entry e, {int? version}) => Entry(
+  Entry _with(Entry e, {int? version, List<String>? previousRefIds}) => Entry(
       id: e.id,
       number: e.number,
       refId: e.refId,
@@ -153,7 +153,7 @@ class FakeCloudApi implements CloudApi {
       modifiedAt: e.modifiedAt,
       version: version ?? e.version,
       deleted: e.deleted,
-      previousRefIds: e.previousRefIds);
+      previousRefIds: previousRefIds ?? e.previousRefIds);
 
   @override
   Future<List<CloudDb>> listDatabases() async {
@@ -227,7 +227,7 @@ class FakeCloudApi implements CloudApi {
   }
 
   @override
-  Future<int> claimNumber(String db, String device, int provisional, List<String> ids) async {
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids, {String? tempRef}) async {
     _checkWrite(db);
     final key = (db, device, provisional);
     final existing = server.claims[key];
@@ -237,6 +237,12 @@ class FakeCloudApi implements CloudApi {
       ..sort((a, b) => a.deleted != b.deleted ? (a.deleted ? 1 : -1) : a.number.compareTo(b.number));
     final n = held.isNotEmpty ? held.first.number : server.nextNumber[db]!;
     if (held.isEmpty) server.nextNumber[db] = n + 1;
+    // The held rows keep the TEMP Ref ID the user saw (updated_at moves, version does not).
+    for (final e in held) {
+      if (tempRef != null && !e.previousRefIds.contains(tempRef)) {
+        server._put(db, _with(e, previousRefIds: [...e.previousRefIds, tempRef]));
+      }
+    }
     server.claims[key] = (number: n, ids: List.of(ids));
     return _respond(n);
   }
@@ -248,11 +254,17 @@ class FakeCloudApi implements CloudApi {
   }
 
   @override
-  Future<List<NumberChange>> currentNumbers(String db) async {
+  Future<List<ServerNumber>> currentNumbers(String db) async {
     _check();
     return [
       for (final e in server.entries(db))
-        (id: e.id, number: e.number, refId: e.refId, previousRefIds: List<String>.of(e.previousRefIds))
+        (
+          id: e.id,
+          number: e.number,
+          refId: e.refId,
+          previousRefIds: List<String>.of(e.previousRefIds),
+          deleted: e.deleted
+        )
     ];
   }
 
@@ -272,9 +284,9 @@ class FakeCloudApi implements CloudApi {
     final cur = server.rows[db]?[e.id]?.$1;
     if (cur == null) {
       if (epoch != (server.epoch[db] ?? 0)) return PushStale();
-      // A new row's number must have been claimed, or join an existing (shared) Ref ID.
+      // A new row's number must have been claimed, or join an existing (shared) Ref ID that is still live.
       final claimed = server.claims.entries.any((c) => c.key.$1 == db && c.value.number == e.number);
-      final joinsExisting = server.entries(db).any((x) => x.number == e.number);
+      final joinsExisting = server.entries(db).any((x) => x.number == e.number && !x.deleted);
       if (!claimed && !joinsExisting) throw StateError('Number ${e.number} was not claimed');
     }
     // Mirrors entries_one_element_per_id: one live row per element within a Ref ID.

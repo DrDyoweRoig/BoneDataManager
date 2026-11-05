@@ -262,6 +262,96 @@ class LocalStore implements EntryWriter {
         }
       });
 
+  /// Takes the server's numbering [server] (generation [epoch]) in one transaction, so nothing added
+  /// meanwhile is left behind:
+  /// - rows deleted on the server and unchanged here are marked deleted (their numbers may be reused);
+  /// - rows the server knows get its number and Ref IDs, except provisional ones (negative numbers):
+  ///   only their claim gives them a real number;
+  /// - rows not uploaded yet follow their group's new number; if their group has no live row on the
+  ///   server any more, they become provisional again (a new TEMP) and claim a number of their own.
+  /// A row whose new place is held here by another live row with the same element stays where it is
+  /// (the pull settles it, as a conflict if that row has a pending edit). Returns those rows' ids.
+  /// Sync state and versions are not touched.
+  Future<List<String>> applyServerNumbering(List<ServerNumber> server, int epoch) => _db.transaction(() async {
+        final rows = {for (final r in await _db.select(_db.entries).get()) r.id: r};
+        for (final s in server) {
+          final r = rows[s.id];
+          if (s.deleted && r != null && !r.deleted && r.syncState == 'synced') {
+            await (_db.update(_db.entries)..where((e) => e.id.equals(r.id)))
+                .write(const EntriesCompanion(deleted: Value(true)));
+            rows[r.id] = r.copyWith(deleted: true);
+          }
+        }
+
+        final changes = <String, NumberChange>{};
+        final moved = <int, int>{}; // old number → new number of live server rows
+        final kept = <int>{}; // numbers whose live server rows did not move
+        for (final s in server) {
+          final r = rows[s.id];
+          if (r == null || r.number < 0) continue;
+          if (!s.deleted) r.number == s.number ? kept.add(s.number) : moved[r.number] = s.number;
+          if (r.number != s.number || r.refId != s.refId || !_sameList(_previous(r), s.previousRefIds)) {
+            changes[s.id] = (id: s.id, number: s.number, refId: s.refId, previousRefIds: s.previousRefIds);
+          }
+        }
+
+        final known = {for (final s in server) s.id};
+        var t = (await _db.select(_db.meta).getSingle()).tempNext;
+        final firstTemp = t;
+        final temps = <int, int>{}; // group gone: old number → its new TEMP
+        for (final r in rows.values) {
+          if (known.contains(r.id) || r.number <= 0 || r.baseVersion != 0) continue;
+          final n = moved[r.number];
+          if (n != null) {
+            changes[r.id] = _renumbered(r, n);
+          } else if (!kept.contains(r.number)) {
+            final temp = temps[r.number] ??= t++;
+            changes[r.id] = (
+              id: r.id,
+              number: -temp,
+              refId: provisionalRefId(_def.prefix, temp),
+              previousRefIds: [..._previous(r), r.refId],
+            );
+          }
+        }
+
+        // Live rows must stay one element per number: leave out moves onto a place that is taken here.
+        final skipped = <String>{};
+        while (true) {
+          final at = <String, List<String>>{};
+          for (final r in rows.values) {
+            if (r.deleted) continue;
+            final c = skipped.contains(r.id) ? null : changes[r.id];
+            (at['${c?.number ?? r.number}|${_elementKey(_toEntry(r).data)}'] ??= []).add(r.id);
+          }
+          final clash = [
+            for (final ids in at.values)
+              if (ids.length > 1)
+                for (final id in ids)
+                  if (changes.containsKey(id) && !skipped.contains(id)) id
+          ];
+          if (clash.isEmpty) break;
+          skipped.addAll(clash);
+        }
+
+        await applyNumbering([for (final c in changes.values) if (!skipped.contains(c.id)) c], epoch: epoch);
+        if (t != firstTemp) {
+          await _db.update(_db.meta).write(MetaCompanion(tempNext: Value(t)));
+          _tempNext = t;
+        }
+        return skipped.toList();
+      });
+
+  static List<String> _previous(EntryRow r) => (jsonDecode(r.previousRefIds) as List).cast<String>();
+
+  static bool _sameList(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   /// [r] under [number]: new Ref ID, its old one appended to previousRefIds.
   NumberChange _renumbered(EntryRow r, int number) => (
         id: r.id,
@@ -387,7 +477,9 @@ class LocalStore implements EntryWriter {
           for (final other in await _clashes(server.number, server.data, exceptId: server.id)) {
             final row = await (_db.select(_db.entries)..where((e) => e.id.equals(other.id))).getSingle();
             if (row.syncState == 'pending') {
-              await addConflict(server, mineId: other.id);
+              // A conflict this row already has (e.g. deleted on the server) is asked first.
+              final asked = await (_db.select(_db.conflicts)..where((c) => c.entryId.equals(other.id))).getSingleOrNull();
+              if (asked == null) await addConflict(server, mineId: other.id);
               return true;
             }
             await (_db.update(_db.entries)..where((e) => e.id.equals(other.id)))
