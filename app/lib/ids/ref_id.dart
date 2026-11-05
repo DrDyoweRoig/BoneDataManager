@@ -5,7 +5,7 @@ String formatRefId(String prefix, int digits, int number) =>
 /// Offline placeholder until the server assigns a real number: `HOL-TEMP-3`, `MAS-TEMP-1`, `TEMP-2`.
 String provisionalRefId(String prefix, int n) {
   final endsAlnum = prefix.isNotEmpty && RegExp(r'[A-Za-z0-9]$').hasMatch(prefix);
-  return '${prefix}${endsAlnum ? '-' : ''}TEMP-$n';
+  return '$prefix${endsAlnum ? '-' : ''}TEMP-$n';
 }
 
 /// Provisional entries carry a negative [number]; positive numbers are always real.
