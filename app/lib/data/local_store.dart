@@ -405,6 +405,7 @@ class LocalStore implements EntryWriter {
         deleted: false,
         syncState: 'synced',
         baseVersion: 0,
+        previousRefIds: '[]',
       );
 
   EntryRow _rowFromEntry(Entry e, String state) => EntryRow(
@@ -425,6 +426,7 @@ class LocalStore implements EntryWriter {
         deleted: e.deleted,
         syncState: state,
         baseVersion: e.version,
+        previousRefIds: jsonEncode(e.previousRefIds),
       );
 
   SimpleSelectStatement<$EntriesTable, EntryRow> _live() => _db.select(_db.entries)
@@ -484,5 +486,6 @@ class LocalStore implements EntryWriter {
         modifiedAt: r.modifiedAt,
         version: r.version,
         deleted: r.deleted,
+        previousRefIds: (jsonDecode(r.previousRefIds) as List).cast<String>().toList(),
       );
 }
