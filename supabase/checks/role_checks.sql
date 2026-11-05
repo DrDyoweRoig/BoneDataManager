@@ -91,7 +91,34 @@ begin
   exception when invalid_parameter_value then
     log := log || 'PASS a new entry with an unclaimed number is refused'::text;
   end;
+
+  -- Numbers 1..10; #3 and #10 deleted; compaction gives 1..8, then offline claims get 9 and 10.
+  perform public.create_entries(db, '[{"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"},
+    {"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"}]', 'OWN');
   reset role;
+  update public.entries set deleted = true where database_id = db and number in (3, 10);
+  set local role authenticated;
+  r := public.compact_ref_ids(db);
+  n := public.claim_number(db, 'pc2', 1, array[gen_random_uuid()]);
+  n2 := public.claim_number(db, 'pc2', 2, array[gen_random_uuid()]);
+  log := log || case when n = 9 and n2 = 10 then 'PASS offline claims after compaction get consecutive numbers'
+                     else 'FAIL claims after compaction got ' || n || ' and ' || n2 end;
+  -- The claim for 10 shares its number with the deleted row but is not uploaded yet: it stays live.
+  reset role;
+  update public.entries set deleted = true where database_id = db and number = 8;
+  set local role authenticated;
+  r := public.compact_ref_ids(db);
+  select array_agg(number order by number) into nums from public.temp_claims
+  where database_id = db and device_id = 'pc2';
+  select next_number into n from public.databases where id = db;
+  log := log || case when nums = '{8,9}' and n = 10
+                     then 'PASS a claim not yet uploaded is renumbered with the live numbers'
+                     else 'FAIL pending claims: ' || coalesce(nums::text, 'none') || ', counter ' || n end;
+  reset role;
+
+  log := log || case when to_regprocedure('public.reserve_block(uuid,text,int)') is null
+                          and to_regclass('public.id_blocks') is null
+                     then 'PASS reserved blocks are gone' else 'FAIL reserve_block or id_blocks still exists' end;
 
   -- Editor
   perform set_config('request.jwt.claims',
@@ -103,13 +130,15 @@ begin
   exception when insufficient_privilege then
     log := log || 'PASS editor cannot close Ref ID gaps'::text;
   end;
+  n := public.claim_number(db, 'editor-pc', 1, '{}');
+  log := log || case when n > 0 then 'PASS editor can claim a number' else 'FAIL editor claim returned ' || n end;
   reset role;
 
   -- Viewer
   perform set_config('request.jwt.claims',
     json_build_object('sub', v, 'email', viewer_email, 'role', 'authenticated')::text, true);
   set local role authenticated;
-  select count(*) into n from public.entries where database_id = db;
+  select count(*) into n from public.entries where database_id = db and id = id1;
   log := log || case when n = 1 then 'PASS viewer can read entries' else 'FAIL viewer read ' || n end;
   begin
     perform public.create_entries(db, '[{"element_id":"femur"}]', 'V');

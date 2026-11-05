@@ -8,11 +8,13 @@ alter table public.entries add column if not exists previous_ref_ids jsonb not n
 alter table public.databases add column if not exists numbering_epoch int not null default 0;
 
 -- Real numbers given to provisional groups. A retried claim (lost answer) gets the same number back.
+-- `ids` are the group's entry ids: while none of them is uploaded, the claim keeps its number live.
 create table if not exists public.temp_claims (
   database_id uuid not null references public.databases(id) on delete cascade,
   device_id   text not null,
   temp_number int  not null,
   number      int  not null,
+  ids         uuid[] not null default '{}',
   primary key (database_id, device_id, temp_number)
 );
 alter table public.temp_claims enable row level security;
@@ -46,21 +48,17 @@ begin
   end if;
 
   select x.number into n from public.entries x
-  where x.database_id = db and x.id = any (ids)
+  where x.database_id = db and x.id = any (claim_number.ids)
   order by x.deleted, x.number
   limit 1;
   if not found then
-    -- Skips numbers still held by deleted rows (possible after a compaction), so a claim whose rows are
-    -- not uploaded yet never shares its number with an entry: compact_ref_ids relies on that.
-    loop
-      update public.databases d set next_number = d.next_number + 1
-      where d.id = db
-      returning d.next_number - 1 into n;
-      exit when not exists (select 1 from public.entries x where x.database_id = db and x.number = n);
-    end loop;
+    update public.databases d set next_number = d.next_number + 1
+    where d.id = db
+    returning d.next_number - 1 into n;
   end if;
 
-  insert into public.temp_claims (database_id, device_id, temp_number, number) values (db, device, temp, n);
+  insert into public.temp_claims (database_id, device_id, temp_number, number, ids)
+  values (db, device, temp, n, coalesce(claim_number.ids, '{}'));
   return n;
 end $$;
 
@@ -87,13 +85,17 @@ begin
     raise exception 'Some entries have an invalid Ref ID number' using errcode = '22023';
   end if;
 
-  -- Live numbers: those of live entries, plus claims whose entries have not been uploaded yet.
+  -- Live numbers: those of live entries, plus claims none of whose entries is uploaded yet (a claim
+  -- without ids: no entry holds its number). A pending claim stays live even if a deleted row has its number.
   with live as (
     select x.number from public.entries x where x.database_id = db and not x.deleted
     union
     select c.number from public.temp_claims c
     where c.database_id = db
-      and not exists (select 1 from public.entries y where y.database_id = db and y.number = c.number)
+      and case when cardinality(c.ids) > 0
+               then not exists (select 1 from public.entries y where y.database_id = db and y.id = any (c.ids))
+               else not exists (select 1 from public.entries y where y.database_id = db and y.number = c.number)
+          end
   ), m as (
     select l.number as old_n, (row_number() over (order by l.number))::int as new_n from live l
   )
@@ -143,6 +145,51 @@ begin
   return jsonb_build_object('epoch', cur_epoch, 'changes', changes);
 end $$;
 
+-- create_database (from 001) also uploads previous_ref_ids ("Move to cloud" of a compacted database),
+-- and locks the database row before touching entries, like the other functions.
+create or replace function public.create_database(def jsonb, "rows" jsonb default '[]')
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  db   uuid := (def ->> 'id')::uuid;
+  mail text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if auth.uid() is null then
+    raise exception 'Sign in required' using errcode = '42501';
+  end if;
+  if exists (select 1 from public.databases where id = db) then
+    perform public._require(db, array['owner']);
+  else
+    insert into public.databases (id, name, prefix, digits, next_number, selected_elements, layers, created_by)
+    values (db, def ->> 'name', coalesce(def ->> 'prefix', ''), coalesce((def ->> 'digits')::int, 4),
+            coalesce((def ->> 'next_number')::int, 1), coalesce(def -> 'selected_elements', '[]'),
+            coalesce(def -> 'layers', '[]'), auth.uid());
+    insert into public.members (database_id, email, user_id, role) values (db, mail, auth.uid(), 'owner');
+  end if;
+  perform 1 from public.databases d where d.id = db for no key update;
+
+  insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
+                              "values", created_by, created_at, modified_by, modified_at, version, deleted,
+                              previous_ref_ids)
+  select r.id, db, r.number, r.ref_id, r.element_id, r.dentition, r.tooth_type, r.jaw, r.side,
+         coalesce(r."values", '{}'), coalesce(r.created_by, ''), r.created_at, coalesce(r.modified_by, ''),
+         r.modified_at, coalesce(r.version, 1), coalesce(r.deleted, false), coalesce(r.previous_ref_ids, '[]')
+  from jsonb_to_recordset("rows") as r(id uuid, number int, ref_id text, element_id text, dentition text,
+       tooth_type text, jaw text, side text, "values" jsonb, created_by text, created_at timestamptz,
+       modified_by text, modified_at timestamptz, version int, deleted boolean, previous_ref_ids jsonb)
+  on conflict (id) do update
+    set number = excluded.number, ref_id = excluded.ref_id, element_id = excluded.element_id,
+        dentition = excluded.dentition, tooth_type = excluded.tooth_type, jaw = excluded.jaw,
+        side = excluded.side, "values" = excluded."values", modified_by = excluded.modified_by,
+        modified_at = excluded.modified_at, version = excluded.version, deleted = excluded.deleted,
+        previous_ref_ids = excluded.previous_ref_ids, updated_at = now()
+    where public.entries.database_id = db;
+
+  update public.databases
+  set next_number = greatest(next_number,
+        coalesce((select max(number) + 1 from public.entries where database_id = db), 1))
+  where id = db;
+end $$;
+
 -- push_entry gains `epoch`: the numbering_epoch the device knows. The old 3-argument version is
 -- removed on purpose, so an outdated app cannot upload numbers that may have changed.
 -- New id: inserted if its number was claimed (temp_claims) or joins an existing Ref ID; if numbers
@@ -181,7 +228,8 @@ begin
               e ->> 'jaw', e ->> 'side', coalesce(e -> 'values', '{}'), coalesce(e ->> 'created_by', ''),
               (e ->> 'created_at')::timestamptz, coalesce(e ->> 'modified_by', ''),
               (e ->> 'modified_at')::timestamptz, 1, coalesce((e ->> 'deleted')::boolean, false),
-              coalesce(e -> 'previous_ref_ids', '[]'));
+              case when jsonb_typeof(e -> 'previous_ref_ids') = 'array' then e -> 'previous_ref_ids'
+                   else '[]'::jsonb end);
     exception when unique_violation then
       -- The same tooth was added to this Ref ID from another device.
       select * into dup from public.entries x
