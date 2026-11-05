@@ -304,6 +304,8 @@ class SyncEngine implements EntryWriter {
         }
       } on CloudDenied catch (err) {
         problem = err.message; // keep it pending, carry on with the others and the pull
+        // A new row refused under a real number: its group may be gone. The next refresh detaches it.
+        if (local.number > 0 && await store.baseVersion(local.id) == 0) _numbersBehind = true;
       }
       return false;
     }

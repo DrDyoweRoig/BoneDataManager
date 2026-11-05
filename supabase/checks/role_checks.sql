@@ -117,6 +117,21 @@ begin
   log := log || case when n = 1 and n2 = 1 then 'PASS a claim keeps the TEMP Ref ID on an uploaded entry'
                      else 'FAIL TEMP Ref ID on an uploaded entry: number ' || n || ', rows ' || n2 end;
 
+  -- A claim whose only uploaded entry is deleted takes a new number (the old one may be reused).
+  reset role;
+  insert into public.entries (id, database_id, number, ref_id, element_id, deleted)
+  values (gen_random_uuid(), db, 600, 'T-0600', 'rib', true) returning id into id1;
+  set local role authenticated;
+  select next_number into n2 from public.databases where id = db;
+  n := public.claim_number(db, 'pc', 4, array[id1], 'T-TEMP-4');
+  log := log || case when n = n2 then 'PASS a claim does not reuse the number of a deleted entry'
+                     else 'FAIL claim for a deleted entry returned ' || n || ' (next was ' || n2 || ')' end;
+  reset role;
+  delete from public.entries where database_id = db and number = 600;
+  update public.databases set next_number = n2 where id = db; -- keep the numbers the next checks expect
+  delete from public.temp_claims where database_id = db and device_id = 'pc' and temp_number = 4;
+  set local role authenticated;
+
   -- Numbers 1..10; #3 and #10 deleted; compaction gives 1..8, then offline claims get 9 and 10.
   perform public.create_entries(db, '[{"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"},
     {"element_id":"rib"},{"element_id":"rib"},{"element_id":"rib"}]', 'OWN');

@@ -81,6 +81,20 @@ void main() {
     expect(store.numberingEpoch, 1);
   });
 
+  test('a row not uploaded yet whose move clashes is detached, never left on a stale number', () async {
+    await store.insertSynced([row('x', 5, 'M1'), row('b', 7, 'M2'), row('h', 8, 'M3')]);
+    await store.updateEntry('x', tooth('M1'), 'JM'); // pending: deleted on the server, stays live here
+    await store.addToGroup('MAS-0007', 7, [tooth('M1')], 'AP', ids: ['f']);
+    final server = [at('x', 5, deleted: true), at('b', 5, previous: ['MAS-0007']), at('h', 7, previous: ['MAS-0008'])];
+    final skipped = await store.applyServerNumbering(server, 1);
+    expect(skipped, isEmpty);
+    final f = (await store.entryById('f'))!;
+    expect([f.number, f.refId, f.previousRefIds], [-1, 'MAS-TEMP-1', ['MAS-0007']]);
+    expect((await store.entryById('h'))!.number, 7);
+    expect(await store.applyServerNumbering(server, 1), isEmpty);
+    expect((await store.entryById('f'))!.number, -1); // stays provisional: its claim numbers it
+  });
+
   test('a pull keeps the conflict a pending row already has', () async {
     await store.insertSynced([row('x', 5, 'M1'), row('y', 6, 'M1')]);
     await store.updateEntry('x', tooth('M1'), 'JM');

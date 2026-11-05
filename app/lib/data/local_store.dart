@@ -269,8 +269,9 @@ class LocalStore implements EntryWriter {
   ///   only their claim gives them a real number;
   /// - rows not uploaded yet follow their group's new number; if their group has no live row on the
   ///   server any more, they become provisional again (a new TEMP) and claim a number of their own.
-  /// A row whose new place is held here by another live row with the same element stays where it is
-  /// (the pull settles it, as a conflict if that row has a pending edit). Returns those rows' ids.
+  /// A row the server knows whose new place is held here by another live row with the same element
+  /// stays where it is (the pull settles it, as a conflict if that row has a pending edit); those ids are
+  /// returned. A row not uploaded yet is never left on a stale number: it becomes provisional instead.
   /// Sync state and versions are not touched.
   Future<List<String>> applyServerNumbering(List<ServerNumber> server, int epoch) => _db.transaction(() async {
         final rows = {for (final r in await _db.select(_db.entries).get()) r.id: r};
@@ -296,26 +297,38 @@ class LocalStore implements EntryWriter {
         }
 
         final known = {for (final s in server) s.id};
+        bool localOnly(EntryRow r) => !known.contains(r.id) && r.number > 0 && r.baseVersion == 0;
         var t = (await _db.select(_db.meta).getSingle()).tempNext;
         final firstTemp = t;
-        final temps = <int, int>{}; // group gone: old number → its new TEMP
+        final temps = <int, int>{}; // detached group: old number → its new TEMP
+        // The rows not uploaded yet under old number [old] become one provisional group again.
+        void detach(int old) {
+          final temp = temps[old] ??= t++;
+          for (final r in rows.values) {
+            if (localOnly(r) && r.number == old) {
+              changes[r.id] = (
+                id: r.id,
+                number: -temp,
+                refId: provisionalRefId(_def.prefix, temp),
+                previousRefIds: [..._previous(r), r.refId],
+              );
+            }
+          }
+        }
+
         for (final r in rows.values) {
-          if (known.contains(r.id) || r.number <= 0 || r.baseVersion != 0) continue;
+          if (!localOnly(r)) continue;
           final n = moved[r.number];
           if (n != null) {
             changes[r.id] = _renumbered(r, n);
           } else if (!kept.contains(r.number)) {
-            final temp = temps[r.number] ??= t++;
-            changes[r.id] = (
-              id: r.id,
-              number: -temp,
-              refId: provisionalRefId(_def.prefix, temp),
-              previousRefIds: [..._previous(r), r.refId],
-            );
+            detach(r.number); // its group is gone from the server
           }
         }
 
-        // Live rows must stay one element per number: leave out moves onto a place that is taken here.
+        // Live rows must stay one element per number. A row not uploaded yet that cannot follow its group
+        // is detached (never left on a number that may now belong to another specimen); a row the server
+        // knows stays where it is.
         final skipped = <String>{};
         while (true) {
           final at = <String, List<String>>{};
@@ -331,6 +344,11 @@ class LocalStore implements EntryWriter {
                   if (changes.containsKey(id) && !skipped.contains(id)) id
           ];
           if (clash.isEmpty) break;
+          final stray = {for (final id in clash) if (localOnly(rows[id]!) && changes[id]!.number > 0) rows[id]!.number};
+          if (stray.isNotEmpty) {
+            stray.forEach(detach);
+            continue;
+          }
           skipped.addAll(clash);
         }
 

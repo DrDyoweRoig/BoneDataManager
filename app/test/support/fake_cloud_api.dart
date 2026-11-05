@@ -232,11 +232,13 @@ class FakeCloudApi implements CloudApi {
     final key = (db, device, provisional);
     final existing = server.claims[key];
     if (existing != null) return _respond(existing.number);
-    // An entry of the group already reached the server (lost answer): reuse its number.
+    // An entry of the group already reached the server (lost answer): reuse its number if still live.
     final held = [for (final id in ids) ?server.rows[db]?[id]?.$1]
       ..sort((a, b) => a.deleted != b.deleted ? (a.deleted ? 1 : -1) : a.number.compareTo(b.number));
-    final n = held.isNotEmpty ? held.first.number : server.nextNumber[db]!;
-    if (held.isEmpty) server.nextNumber[db] = n + 1;
+    // Only a live row's number is reused: a deleted row's number may belong to another specimen now.
+    final live = held.where((e) => !e.deleted).toList();
+    final n = live.isNotEmpty ? live.first.number : server.nextNumber[db]!;
+    if (live.isEmpty) server.nextNumber[db] = n + 1;
     // The held rows keep the TEMP Ref ID the user saw (updated_at moves, version does not).
     for (final e in held) {
       if (tempRef != null && !e.previousRefIds.contains(tempRef)) {
@@ -287,7 +289,8 @@ class FakeCloudApi implements CloudApi {
       // A new row's number must have been claimed, or join an existing (shared) Ref ID that is still live.
       final claimed = server.claims.entries.any((c) => c.key.$1 == db && c.value.number == e.number);
       final joinsExisting = server.entries(db).any((x) => x.number == e.number && !x.deleted);
-      if (!claimed && !joinsExisting) throw StateError('Number ${e.number} was not claimed');
+      // Supabase raises 22023, which the client maps to CloudDenied.
+      if (!claimed && !joinsExisting) throw CloudDenied('Number ${e.number} was not claimed');
     }
     // Mirrors entries_one_element_per_id: one live row per element within a Ref ID.
     if (!e.deleted) {

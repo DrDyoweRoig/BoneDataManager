@@ -31,8 +31,9 @@ drop table if exists public.id_blocks;
 -- ───────────────────────── Functions (RPC) ─────────────────────────
 
 -- The real number for provisional group `temp` of `device`. `ids` are the group's entry ids: if one of
--- them already reached the server (an online create whose answer was lost), its number is reused and
--- `temp_ref` (the TEMP Ref ID the user saw) is added to those rows' previous_ref_ids, so no ID is lost.
+-- them already reached the server (an online create whose answer was lost) and is live, its number is
+-- reused (a deleted row's number may belong to another specimen after compaction). `temp_ref` (the TEMP
+-- Ref ID the user saw) is added to the previous_ref_ids of the rows already there, so no ID is lost.
 drop function if exists public.claim_number(uuid, text, int, uuid[]);
 create or replace function public.claim_number(db uuid, device text, temp int, ids uuid[], temp_ref text default null)
 returns int language plpgsql security definer set search_path = public as $$
@@ -50,14 +51,15 @@ begin
   end if;
 
   select x.number into n from public.entries x
-  where x.database_id = db and x.id = any (claim_number.ids)
-  order by x.deleted, x.number
+  where x.database_id = db and x.id = any (claim_number.ids) and not x.deleted
+  order by x.number
   limit 1;
   if not found then
     update public.databases d set next_number = d.next_number + 1
     where d.id = db
     returning d.next_number - 1 into n;
-  elsif temp_ref is not null then
+  end if;
+  if temp_ref is not null then
     -- Bumps updated_at (devices pull it) but not version (no conflict with pending edits).
     update public.entries x
     set previous_ref_ids = x.previous_ref_ids || jsonb_build_array(temp_ref), updated_at = now()

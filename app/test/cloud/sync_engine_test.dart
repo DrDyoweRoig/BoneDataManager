@@ -766,6 +766,48 @@ void main() {
       expect(b.status.value.pending, 0);
     });
 
+    test('a tooth added offline whose move clashes after a compaction gets its own number', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final types = ['M1', 'M1', 'M1', 'M1', 'M1', 'M2', 'M2', 'M3'];
+      final made = [for (final ty in types) (await a.createEntries([t(ty)], 'AP')).single]; // #1..#8
+      await b.syncNow();
+      apiB.online = false;
+      await b.updateEntry(made[4].id, t('M1'), 'JM'); // x = #5 M1, edited here
+      final f = (await b.addToGroup(made[5].refId, made[5].number, [t('M1')], 'JM')).single; // to #6
+      await a.deleteEntry(made[4].id, 'AP'); // x deleted elsewhere
+      await a.syncNow();
+      await a.compactRefIds(); // #6 → 5 (onto x's place here), #7 → 6, #8 → 7
+      apiB.online = true;
+      await b.syncNow();
+      await b.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == f.id);
+      expect([up.number, up.previousRefIds], [8, ['MAS-0006', 'MAS-TEMP-1']]);
+      expect(server.entries('db1').where((e) => e.number == 6 && !e.deleted).map((e) => e.id), [made[6].id]);
+      expect((await storeB.entryById(f.id))!.refId, 'MAS-0008');
+      expect(b.problem.value, isNull);
+      expect((await storeB.conflicts()).single.mine.id, made[4].id);
+    });
+
+    test('a tooth added offline to a specimen deleted elsewhere (no compaction) is re-TEMPed and uploaded', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final made = [for (var i = 0; i < 3; i++) (await a.createEntries([t('M1')], 'AP')).single];
+      await b.syncNow();
+      apiB.online = false;
+      final f = (await b.addToGroup(made[2].refId, made[2].number, [t('M2')], 'JM')).single; // to #3
+      await a.deleteEntry(made[2].id, 'AP'); // #3 gone; numbering unchanged
+      await a.syncNow();
+      apiB.online = true;
+      await b.syncNow(); // refused: #3 is not a live Ref ID any more
+      await b.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == f.id);
+      expect([up.number, up.previousRefIds], [4, ['MAS-0003', 'MAS-TEMP-1']]);
+      expect((await storeB.entryById(f.id))!.refId, 'MAS-0004');
+      expect(b.problem.value, isNull);
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
     test('compactRefIds offline throws CloudOffline', () async {
       final (a, _, apiA) = await computer('pc-a');
       apiA.online = false;

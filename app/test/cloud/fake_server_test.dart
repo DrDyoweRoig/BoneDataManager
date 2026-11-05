@@ -36,7 +36,7 @@ void main() {
   });
 
   test('a new row needs a claimed number and the current epoch', () async {
-    expect(() => api.pushEntry('db', _e('a', 5), baseVersion: 0, epoch: 0), throwsStateError);
+    expect(() => api.pushEntry('db', _e('a', 5), baseVersion: 0, epoch: 0), throwsA(isA<CloudDenied>()));
     final n = await api.claimNumber('db', 'dev', -1, ['a']);
     expect(await api.pushEntry('db', _e('a', n), baseVersion: 0, epoch: 3), isA<PushStale>());
     expect(await api.pushEntry('db', _e('a', n), baseVersion: 0, epoch: 0), isA<PushOk>());
@@ -62,7 +62,7 @@ void main() {
 
   test('a new row cannot join a number held only by a deleted row', () async {
     server.put('db', _e('gone', 4, deleted: true));
-    expect(() => api.pushEntry('db', _e('new', 4), baseVersion: 0, epoch: 0), throwsStateError);
+    expect(() => api.pushEntry('db', _e('new', 4), baseVersion: 0, epoch: 0), throwsA(isA<CloudDenied>()));
     server.put('db', _e('live', 5));
     expect(await api.pushEntry('db', _e('joins', 5), baseVersion: 0, epoch: 0), isA<PushOk>());
   });
@@ -75,6 +75,14 @@ void main() {
     expect([row.previousRefIds, row.version], [['X-TEMP-1'], 1]);
     expect(at.isAfter(before), isTrue);
     await api.claimNumber('db', 'dev2', 1, ['a'], tempRef: 'X-TEMP-1');
+    expect(server.rows['db']!['a']!.$1.previousRefIds, ['X-TEMP-1']);
+  });
+
+  test('a claim reuses only a live held row, but still keeps the TEMP on deleted ones', () async {
+    server.put('db', _e('a', 4, deleted: true));
+    server.nextNumber['db'] = 6;
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b'], tempRef: 'X-TEMP-1'), 6);
+    expect(server.nextNumber['db'], 7);
     expect(server.rows['db']!['a']!.$1.previousRefIds, ['X-TEMP-1']);
   });
 
