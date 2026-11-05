@@ -2,9 +2,11 @@
 String formatRefId(String prefix, int digits, int number) =>
     '$prefix${number.toString().padLeft(digits, '0')}';
 
+final _alnumEnd = RegExp(r'[A-Za-z0-9]$');
+
 /// Offline placeholder until the server assigns a real number: `HOL-TEMP-3`, `MAS-TEMP-1`, `TEMP-2`.
 String provisionalRefId(String prefix, int n) {
-  final endsAlnum = prefix.isNotEmpty && RegExp(r'[A-Za-z0-9]$').hasMatch(prefix);
+  final endsAlnum = _alnumEnd.hasMatch(prefix);
   return '$prefix${endsAlnum ? '-' : ''}TEMP-$n';
 }
 
