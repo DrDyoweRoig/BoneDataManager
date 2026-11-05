@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../cloud/cloud_api.dart';
@@ -160,6 +162,11 @@ class _StructureScreenState extends State<StructureScreen> {
       if (mounted) setState(() => _error = 'Closing gaps needs an internet connection.');
     } on CloudDenied catch (e) {
       if (mounted) setState(() => _error = e.message);
+    } on FileSystemException catch (e) {
+      // The backup comes first, so nothing was renumbered.
+      if (mounted) setState(() => _error = "Couldn't make a backup, so nothing was renumbered: $e");
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't close gaps: $e");
     }
   }
 

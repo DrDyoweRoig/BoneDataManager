@@ -419,16 +419,16 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     final start = offline ? widget.store.nextProvisional : next;
     String ref(int n) => offline ? provisionalRefId(prefix, n) : formatRefId(prefix, digits, n);
     final tag = offline ? ' (provisional)' : '';
-    final sharedRef = _adding ? widget.addTo!.refId : '${ref(start)}$tag';
+    final sharedRef = _adding ? widget.addTo!.refId : ref(start);
     final String title;
     if (teeth.isEmpty) {
       title = 'Select jaw, side and tooth type';
     } else if (_adding) {
       title = '${teeth.length} ${teeth.length == 1 ? 'tooth' : 'teeth'} will be added to $sharedRef';
     } else if (shared) {
-      title = '${teeth.length} entries will be created, all with Ref ID $sharedRef';
+      title = '${teeth.length} entries will be created, all with Ref ID $sharedRef$tag';
     } else if (offline && teeth.length == 1) {
-      title = '1 entry will be saved as $sharedRef';
+      title = '1 entry will be saved as $sharedRef$tag';
     } else {
       title = '${teeth.length} ${teeth.length == 1 ? 'entry' : 'entries'} will be created$tag';
     }
@@ -440,7 +440,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
           Text(title, style: theme.textTheme.titleSmall),
           for (var i = 0; i < teeth.length; i++)
             Text(
-                '${shared ? sharedRef : formatRefId(prefix, digits, next + i)} · '
+                '${shared ? sharedRef : ref(start + i)} · '
                 '${teeth[i].type} · ${teeth[i].jaw.label} · ${teeth[i].side.label}',
                 style: theme.textTheme.bodyMedium?.copyWith(fontFamily: 'monospace')),
         ]),

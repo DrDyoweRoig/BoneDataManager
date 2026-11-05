@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
 import 'backup/backup_service.dart';
 import 'cloud/auth_service.dart';
+import 'cloud/cloud_api.dart';
 import 'cloud/cloud_config.dart';
 import 'cloud/cloud_connection.dart';
 import 'cloud/move_to_cloud.dart';
@@ -113,6 +114,7 @@ class BoneDataManagerApp extends ConsumerWidget {
                                     await BackupService(Directory(settings.backupDir))
                                         .backup(store, exportedBy: settings.observerId ?? '');
                                     final engine = ref.read(syncEngineProvider);
+                                    if (engine == null && store.cloudId != null) throw const CloudOffline();
                                     final changes = await (engine?.compactRefIds() ?? store.compactLocal());
                                     ref.read(openStoreProvider.notifier).definitionChanged();
                                     return changes;

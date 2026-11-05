@@ -61,8 +61,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _syncEvents = engine?.events.listen((e) {
       // Phones show the offline banner instead; their saves never use reserved IDs.
       if (!mounted || isMobile) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(syncEventMessage(e, _store?.def.prefix ?? '')), duration: const Duration(seconds: 8)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(syncEventMessage(e, _store?.def.prefix ?? '')),
+        duration: const Duration(seconds: 8),
+      ));
     });
   }
 

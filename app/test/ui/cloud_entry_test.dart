@@ -76,4 +76,58 @@ void main() {
     }
     expect(find.textContaining('will be saved as HOL-TEMP-${store.nextProvisional} (provisional)'), findsOneWidget);
   });
+
+  Future<LocalStore> pumpOfflineForm(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const def = DatabaseDef(id: 'db1', name: 'Site', prefix: 'HOL', selectedElements: {kTeethId});
+    final server = FakeCloudServer();
+    final (store, engine) = (await tester.runAsync(() async {
+      final api = FakeCloudApi(server);
+      await api.createDatabase(def, nextNumber: 1);
+      final s = await LocalStore.inMemory(def);
+      await s.linkToCloud('db1', 'pc-a');
+      final e = SyncEngine(s, api);
+      await e.syncNow();
+      api.online = false;
+      await e.syncNow();
+      return (s, e);
+    }))!;
+    addTearDown(() => tester.runAsync(() async {
+          await engine.dispose();
+          await store.close();
+        }));
+    await tester.pumpWidget(MaterialApp(
+        theme: buildTheme(Brightness.light),
+        home: EntryFormScreen(store: store, writer: engine, observer: 'AP')));
+    await tester.pumpAndSettle();
+    for (final t in ['Lower', 'Left', 'M1', 'M2']) {
+      await tester.tap(find.text(t).last);
+      await tester.pumpAndSettle();
+    }
+    return store;
+  }
+
+  testWidgets('offline preview of teeth saved separately lists consecutive TEMP numbers', (tester) async {
+    final store = await pumpOfflineForm(tester);
+    await tester.tap(find.byKey(const Key('shared-no')));
+    await tester.pumpAndSettle();
+    final n = store.nextProvisional;
+    expect(find.text('2 entries will be created (provisional)'), findsOneWidget);
+    expect(find.textContaining('HOL-TEMP-$n · M1'), findsOneWidget);
+    expect(find.textContaining('HOL-TEMP-${n + 1} · M2'), findsOneWidget);
+    expect(find.textContaining('HOL0001'), findsNothing);
+  });
+
+  testWidgets('offline preview of a shared Ref ID shows the provisional tag once', (tester) async {
+    final store = await pumpOfflineForm(tester);
+    await tester.tap(find.byKey(const Key('shared-yes')));
+    await tester.pumpAndSettle();
+    final n = store.nextProvisional;
+    expect(find.text('2 entries will be created, all with Ref ID HOL-TEMP-$n (provisional)'), findsOneWidget);
+    expect(find.text('HOL-TEMP-$n · M1 · Lower · Left'), findsOneWidget);
+    expect(find.text('HOL-TEMP-$n · M2 · Lower · Left'), findsOneWidget);
+    expect(find.textContaining('(provisional) ·'), findsNothing);
+  });
 }
