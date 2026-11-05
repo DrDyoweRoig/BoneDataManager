@@ -141,6 +141,23 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
+  test('v3 → v4 leaves teeth added offline to a specimen already on the server under its Ref ID', () async {
+    final tmp = await Directory.systemTemp.createTemp('bdm_mig');
+    final f = File('${tmp.path}/v3.sqlite');
+    String tooth(String id, String type, String state, int base) =>
+        "INSERT INTO entries VALUES ('$id', 9, 'HOL0009', 'teeth', 'permanent', '$type', 'lower', 'left', '{}', "
+        "'AP', 1761300000, 'AP', 1761300000, 1, 0, '$state', $base)";
+    await writeV3File(f, cloud: true, extra: [tooth('s', 'M1', 'synced', 1), tooth('n', 'M2', 'pending', 0)]);
+
+    final s = await LocalStore.open(f);
+    final byId = {for (final e in await s.allEntries()) e.id: e};
+    expect([byId['s']!.refId, byId['n']!.refId], ['HOL0009', 'HOL0009']); // n stays with its specimen
+    expect(byId['n']!.previousRefIds, isEmpty);
+    expect([byId['a']!.number, byId['c']!.number], [-1, -2]); // block rows still become provisional
+    await s.close();
+    await tmp.delete(recursive: true);
+  });
+
   test('v3 → v4 without a block leaves every row alone', () async {
     final tmp = await Directory.systemTemp.createTemp('bdm_mig');
     final f = File('${tmp.path}/v3.sqlite');

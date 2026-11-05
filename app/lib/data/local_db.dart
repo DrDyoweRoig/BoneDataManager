@@ -141,17 +141,21 @@ class LocalDb extends _$LocalDb {
       );
 
   /// v4: rows numbered from the old reserved block but never uploaded become provisional.
-  /// Rows sharing a number stay one group (one TEMP). Only on cloud-linked files.
+  /// Rows sharing a number stay one group (one TEMP). Only on cloud-linked files. A number that some row
+  /// already has on the server (synced, or uploaded before) is a server Ref ID: rows added to it offline
+  /// stay with their specimen.
   Future<void> _convertBlockRowsToProvisional() async {
     final metaRow = await select(meta).getSingleOrNull();
     if (metaRow == null || metaRow.cloudId == null) return;
     final rows = await (select(entries)
-          ..where((e) => e.syncState.equals('pending') & e.baseVersion.equals(0) & e.number.isBiggerThanValue(0))
+          ..where((e) => e.number.isBiggerThanValue(0))
           ..orderBy([(e) => OrderingTerm(expression: e.number)]))
         .get();
+    final onServer = {for (final r in rows) if (r.syncState == 'synced' || r.baseVersion > 0) r.number};
     var temp = metaRow.tempNext;
     final groups = <int, List<EntryRow>>{};
     for (final r in rows) {
+      if (onServer.contains(r.number)) continue;
       groups.putIfAbsent(r.number, () => []).add(r);
     }
     for (final number in groups.keys.toList()..sort()) {
