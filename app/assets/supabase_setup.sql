@@ -462,6 +462,19 @@ grant execute on function public.app_schema_version() to anon, authenticated;
 alter table public.entries add column if not exists previous_ref_ids jsonb not null default '[]';
 alter table public.databases add column if not exists numbering_epoch int not null default 0;
 
+-- The numbering epoch a row was deleted in (null while live): undeleting it after a compaction gives it
+-- a new number (push_entry). Rows deleted before this migration were deleted before any compaction.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'entries' and column_name = 'deleted_epoch') then
+    alter table public.entries add column deleted_epoch int;
+    update public.entries x set deleted_epoch = 0
+    from public.databases d
+    where d.id = x.database_id and x.deleted and d.numbering_epoch = 0;
+  end if;
+end $$;
+
 -- Real numbers given to provisional groups. A retried claim (lost answer) gets the same number back.
 -- `ids` are the group's entry ids: while none of them is uploaded, the claim keeps its number live.
 create table if not exists public.temp_claims (
@@ -646,10 +659,12 @@ begin
 
   insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
                               "values", created_by, created_at, modified_by, modified_at, version, deleted,
-                              previous_ref_ids)
+                              previous_ref_ids, deleted_epoch)
   select r.id, db, r.number, r.ref_id, r.element_id, r.dentition, r.tooth_type, r.jaw, r.side,
          coalesce(r."values", '{}'), coalesce(r.created_by, ''), r.created_at, coalesce(r.modified_by, ''),
-         r.modified_at, coalesce(r.version, 1), coalesce(r.deleted, false), coalesce(r.previous_ref_ids, '[]')
+         r.modified_at, coalesce(r.version, 1), coalesce(r.deleted, false), coalesce(r.previous_ref_ids, '[]'),
+         case when coalesce(r.deleted, false)
+              then (select d.numbering_epoch from public.databases d where d.id = db) end
   from jsonb_to_recordset("rows") as r(id uuid, number int, ref_id text, element_id text, dentition text,
        tooth_type text, jaw text, side text, "values" jsonb, created_by text, created_at timestamptz,
        modified_by text, modified_at timestamptz, version int, deleted boolean, previous_ref_ids jsonb)
@@ -658,7 +673,10 @@ begin
         dentition = excluded.dentition, tooth_type = excluded.tooth_type, jaw = excluded.jaw,
         side = excluded.side, "values" = excluded."values", modified_by = excluded.modified_by,
         modified_at = excluded.modified_at, version = excluded.version, deleted = excluded.deleted,
-        previous_ref_ids = excluded.previous_ref_ids, updated_at = now()
+        previous_ref_ids = excluded.previous_ref_ids, updated_at = now(),
+        deleted_epoch = case when not excluded.deleted then null
+                             when public.entries.deleted then public.entries.deleted_epoch
+                             else excluded.deleted_epoch end
     where public.entries.database_id = db;
 
   update public.databases
@@ -671,21 +689,34 @@ end $$;
 -- removed on purpose, so an outdated app cannot upload numbers that may have changed.
 -- New id: inserted if its number was claimed (temp_claims) or joins a live Ref ID; if numbers
 -- changed since the device's epoch, returns {"status": "stale"} so the device renumbers and retries.
--- Existing id: as before; an update never touches number, ref_id or previous_ref_ids.
+-- Existing id: as before; an update never touches number, ref_id or previous_ref_ids, except an undelete
+-- after a compaction (deleted_epoch is older): its old number may be another specimen's now, so it takes
+-- a new one from next_number and keeps the old Ref ID in previous_ref_ids.
 drop function if exists public.push_entry(uuid, jsonb, int);
 create or replace function public.push_entry(db uuid, e jsonb, base_version int, epoch int)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
-  eid       uuid := (e ->> 'id')::uuid;
-  num       int  := (e ->> 'number')::int;
+  eid       uuid    := (e ->> 'id')::uuid;
+  num       int     := (e ->> 'number')::int;
+  gone      boolean := coalesce((e ->> 'deleted')::boolean, false);
+  p         text;
+  dg        int;
   cur_epoch int;
   cur       public.entries;
   dup       public.entries;
   v         int;
+  new_num   int;
+  new_ref   text;
+  new_prev  jsonb;
 begin
   perform public._require(db, array['owner', 'editor']);
   -- Never runs alongside compact_ref_ids (which locks this row for update); pushes do not block each other.
-  select d.numbering_epoch into cur_epoch from public.databases d where d.id = db for key share;
+  select d.numbering_epoch, d.prefix, d.digits into cur_epoch, p, dg
+  from public.databases d where d.id = db for key share;
+  -- An undelete may take a new number below: lock the counter before the entry row, like claim_number.
+  if not gone and exists (select 1 from public.entries x where x.id = eid and x.database_id = db and x.deleted) then
+    perform 1 from public.databases d where d.id = db for no key update;
+  end if;
   select * into cur from public.entries x where x.id = eid and x.database_id = db for update;
 
   if not found then
@@ -702,13 +733,14 @@ begin
     begin
       insert into public.entries (id, database_id, number, ref_id, element_id, dentition, tooth_type, jaw, side,
                                   "values", created_by, created_at, modified_by, modified_at, version, deleted,
-                                  previous_ref_ids)
+                                  previous_ref_ids, deleted_epoch)
       values (eid, db, num, e ->> 'ref_id', e ->> 'element_id', e ->> 'dentition', e ->> 'tooth_type',
               e ->> 'jaw', e ->> 'side', coalesce(e -> 'values', '{}'), coalesce(e ->> 'created_by', ''),
               (e ->> 'created_at')::timestamptz, coalesce(e ->> 'modified_by', ''),
-              (e ->> 'modified_at')::timestamptz, 1, coalesce((e ->> 'deleted')::boolean, false),
+              (e ->> 'modified_at')::timestamptz, 1, gone,
               case when jsonb_typeof(e -> 'previous_ref_ids') = 'array' then e -> 'previous_ref_ids'
-                   else '[]'::jsonb end);
+                   else '[]'::jsonb end,
+              case when gone then cur_epoch end);
     exception when unique_violation then
       -- The same tooth was added to this Ref ID from another device.
       select * into dup from public.entries x
@@ -732,18 +764,34 @@ begin
        and cur.jaw is not distinct from e ->> 'jaw'
        and cur.side is not distinct from e ->> 'side'
        and cur."values" = coalesce(e -> 'values', '{}')
-       and cur.deleted = coalesce((e ->> 'deleted')::boolean, false) then
+       and cur.deleted = gone then
       return jsonb_build_object('status', 'ok', 'version', cur.version);
     end if;
     return jsonb_build_object('status', 'conflict', 'row', to_jsonb(cur));
   end if;
 
   begin
+    new_num := cur.number;
+    new_ref := cur.ref_id;
+    new_prev := cur.previous_ref_ids;
+    if cur.deleted and not gone and cur.deleted_epoch is distinct from cur_epoch then
+      -- Undeleted after a compaction: a number nobody holds (taken inside this block, so a failed
+      -- update does not spend it); the old Ref ID is kept.
+      update public.databases d set next_number = d.next_number + 1
+      where d.id = db
+      returning d.next_number - 1 into new_num;
+      new_ref := public._ref(p, dg, new_num);
+      new_prev := cur.previous_ref_ids || to_jsonb(cur.ref_id);
+    end if;
     update public.entries x
     set element_id = e ->> 'element_id', dentition = e ->> 'dentition', tooth_type = e ->> 'tooth_type',
         jaw = e ->> 'jaw', side = e ->> 'side', "values" = coalesce(e -> 'values', '{}'),
         modified_by = coalesce(e ->> 'modified_by', ''), modified_at = (e ->> 'modified_at')::timestamptz,
-        deleted = coalesce((e ->> 'deleted')::boolean, false),
+        deleted = gone,
+        number = new_num, ref_id = new_ref, previous_ref_ids = new_prev,
+        deleted_epoch = case when not gone then null
+                             when cur.deleted then cur.deleted_epoch
+                             else cur_epoch end,
         version = cur.version + 1, updated_at = now()
     where x.id = eid
     returning x.version into v;

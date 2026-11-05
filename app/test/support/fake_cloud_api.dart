@@ -16,6 +16,9 @@ class FakeCloudServer {
   /// Numbers handed out to provisional groups, keyed (db, device, temp number); `ids` are the group's entry ids.
   final claims = <(String, String, int), ({int number, List<String> ids})>{};
   final members = <String, Map<String, String>>{};
+
+  /// entries.deleted_epoch: the numbering epoch a row was deleted in (absent while live).
+  final deletedEpoch = <(String, String), int>{};
   final _changes = StreamController<String>.broadcast();
   var _tick = 0;
 
@@ -82,8 +85,21 @@ class FakeCloudServer {
     return (epoch: epoch[db] = (epoch[db] ?? 0) + 1, changes: changes);
   }
 
-  /// Test helper: store a row as the server would.
-  void put(String db, Entry e) => _put(db, e);
+  /// Test helper: store a row as the server would (a deleted row counts as deleted now).
+  void put(String db, Entry e) {
+    _noteDeletion(db, e);
+    _put(db, e);
+  }
+
+  /// Keeps deleted_epoch: set when a row becomes deleted, cleared when it is live.
+  void _noteDeletion(String db, Entry e) {
+    final key = (db, e.id);
+    if (!e.deleted) {
+      deletedEpoch.remove(key);
+    } else if (!(rows[db]?[e.id]?.$1.deleted ?? false) || !deletedEpoch.containsKey(key)) {
+      deletedEpoch[key] = epoch[db] ?? 0;
+    }
+  }
 
   List<Entry> entries(String db) =>
       ((rows[db] ?? {}).values.map((r) => r.$1).toList())..sort((a, b) => a.number.compareTo(b.number));
@@ -186,6 +202,7 @@ class FakeCloudApi implements CloudApi {
     }
     // Upload of the owner's own rows: insert or overwrite (on conflict do update).
     for (final e in rows) {
+      server._noteDeletion(def.id, e);
       server._put(def.id, e);
     }
     final maxN = server.entries(def.id).fold(0, (m, e) => e.number > m ? e.number : m);
@@ -302,8 +319,12 @@ class FakeCloudApi implements CloudApi {
       // Supabase raises 22023, which the client maps to CloudDenied.
       if (!claimed && !joinsExisting) throw CloudDenied('Number ${e.number} was not claimed');
     }
+    // An undelete after a compaction (the row was deleted in an older epoch) takes a new number: its old
+    // one may be another specimen's now.
+    final freshNumber = cur != null && cur.deleted && !e.deleted &&
+        server.deletedEpoch[(db, e.id)] != (server.epoch[db] ?? 0);
     // Mirrors entries_one_element_per_id: one live row per element within a Ref ID.
-    if (!e.deleted) {
+    if (!e.deleted && !freshNumber) {
       for (final x in server.entries(db)) {
         if (x.id != e.id && !x.deleted && x.number == (cur?.number ?? e.number) && _sameElement(x, e)) {
           return PushDuplicate(x);
@@ -311,7 +332,20 @@ class FakeCloudApi implements CloudApi {
       }
     }
     if (cur == null) {
-      server._put(db, _with(e, version: 1));
+      final row = Entry(
+          id: e.id,
+          number: e.number,
+          refId: e.refId,
+          data: e.data,
+          createdBy: e.createdBy,
+          createdAt: e.createdAt,
+          modifiedBy: e.modifiedBy,
+          modifiedAt: e.modifiedAt,
+          version: 1,
+          deleted: e.deleted,
+          previousRefIds: e.previousRefIds);
+      server._noteDeletion(db, row);
+      server._put(db, row);
       return _respond(PushOk(1));
     }
     // base 0 = "my own creation" (an online create whose response was lost): matches version 1.
@@ -321,11 +355,21 @@ class FakeCloudApi implements CloudApi {
       return _sameContent(cur, e) ? PushOk(cur.version) : PushConflict(cur);
     }
     final v = cur.version + 1;
-    // The server keeps its own number and Ref ID for the row.
-    server._put(db, Entry(
+    // The server keeps its own number and Ref ID for the row, unless an undelete needs a new number.
+    var number = cur.number;
+    var refId = cur.refId;
+    var previous = cur.previousRefIds;
+    if (freshNumber) {
+      final def = server.defs[db]!;
+      number = server.nextNumber[db]!;
+      server.nextNumber[db] = number + 1;
+      refId = formatRefId(def.prefix, def.digits, number);
+      previous = [...previous, cur.refId];
+    }
+    final row = Entry(
         id: e.id,
-        number: cur.number,
-        refId: cur.refId,
+        number: number,
+        refId: refId,
         data: e.data,
         createdBy: cur.createdBy,
         createdAt: cur.createdAt,
@@ -333,7 +377,9 @@ class FakeCloudApi implements CloudApi {
         modifiedAt: e.modifiedAt,
         version: v,
         deleted: e.deleted,
-        previousRefIds: cur.previousRefIds));
+        previousRefIds: previous);
+    server._noteDeletion(db, row);
+    server._put(db, row);
     return _respond(PushOk(v));
   }
 

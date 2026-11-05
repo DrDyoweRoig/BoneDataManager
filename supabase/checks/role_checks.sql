@@ -22,6 +22,8 @@ declare
   id1 uuid;
   r   jsonb;
   nums int[];
+  ref_old text;
+  ref_new text;
   log text[] := '{}';
 begin
   select id into o from auth.users where email = owner_email;
@@ -162,6 +164,45 @@ begin
   reset role;
   delete from public.entries where id = id1;
   delete from public.temp_claims where database_id = db and device_id = 'pc' and temp_number = 5;
+  update public.databases set next_number = n2 where id = db;
+  set local role authenticated;
+
+  -- A deletion records the numbering epoch; undeleting in the same epoch keeps the number, undeleting
+  -- after a compaction takes a new one and keeps the old Ref ID.
+  reset role;
+  select next_number into n2 from public.databases where id = db;
+  insert into public.entries (id, database_id, number, ref_id, element_id)
+  values (gen_random_uuid(), db, n2, public._ref('T-', 4, n2), 'sternum') returning id into id1;
+  update public.databases set next_number = n2 + 1 where id = db;
+  ref_old := public._ref('T-', 4, n2);
+  ref_new := public._ref('T-', 4, n2 + 1);
+  set local role authenticated;
+  r := public.push_entry(db, jsonb_build_object('id', id1, 'element_id', 'sternum', 'deleted', true,
+         'modified_at', now()), 1, 0);
+  select count(*) into n from public.entries x join public.databases d on d.id = x.database_id
+  where x.id = id1 and x.deleted and x.deleted_epoch = d.numbering_epoch;
+  log := log || case when n = 1 then 'PASS a deletion records the numbering epoch'
+                     else 'FAIL deleted_epoch not set: ' || r::text end;
+  r := public.push_entry(db, jsonb_build_object('id', id1, 'element_id', 'sternum', 'deleted', false,
+         'modified_at', now()), 2, 0);
+  select count(*) into n from public.entries x
+  where x.id = id1 and not x.deleted and x.number = n2 and x.deleted_epoch is null;
+  log := log || case when n = 1 then 'PASS an undelete in the same epoch keeps the number'
+                     else 'FAIL undelete in the same epoch: ' || r::text end;
+  r := public.push_entry(db, jsonb_build_object('id', id1, 'element_id', 'sternum', 'deleted', true,
+         'modified_at', now()), 3, 0);
+  reset role;
+  update public.entries set deleted_epoch = deleted_epoch - 1 where id = id1; -- a compaction since
+  set local role authenticated;
+  r := public.push_entry(db, jsonb_build_object('id', id1, 'element_id', 'sternum', 'deleted', false,
+         'modified_at', now()), 4, 0);
+  select count(*) into n from public.entries x
+  where x.id = id1 and not x.deleted and x.number = n2 + 1 and x.ref_id = ref_new
+    and x.previous_ref_ids = jsonb_build_array(ref_old) and x.deleted_epoch is null;
+  log := log || case when n = 1 then 'PASS an undelete after a compaction takes a new number'
+                     else 'FAIL undelete after a compaction: ' || r::text end;
+  reset role;
+  delete from public.entries where id = id1;
   update public.databases set next_number = n2 where id = db;
   set local role authenticated;
 

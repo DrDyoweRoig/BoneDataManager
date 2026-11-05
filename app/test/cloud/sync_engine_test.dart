@@ -854,6 +854,33 @@ void main() {
       expect([a.status.value.pending, a.status.value.conflicts], [0, 0]);
     });
 
+    test('keeping my edit of a row deleted elsewhere before a compaction gives it a new number', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final made = [
+        for (final d in [left, left, left, left, right, left]) (await a.createEntries([d], 'AP')).single
+      ]; // R = #5 femur right
+      final r = made[4];
+      await b.syncNow();
+      apiB.online = false;
+      await b.updateEntry(r.id, const EntryDraft(elementId: 'femur', side: Side.right, values: {'n': 1}), 'JM');
+      await a.deleteEntry(r.id, 'AP');
+      await a.syncNow();
+      await a.compactRefIds(); // #6 → 5: another specimen now holds R's old number
+      apiB.online = true;
+      await b.syncNow();
+      expect((await storeB.conflicts()).single.mine.id, r.id);
+      await b.resolve(r.id, keepMine: true);
+      await b.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == r.id);
+      expect([up.deleted, up.number, up.refId, up.previousRefIds, up.data.values['n']],
+          [false, 6, 'MAS-0006', ['MAS-0005'], 1]);
+      expect(server.entries('db1').where((e) => e.number == 5 && !e.deleted).map((e) => e.id), [made[5].id]);
+      final mine = (await storeB.entryById(r.id))!;
+      expect([mine.refId, mine.previousRefIds], ['MAS-0006', ['MAS-0005']]);
+      expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
+    });
+
     test('compactRefIds offline throws CloudOffline', () async {
       final (a, _, apiA) = await computer('pc-a');
       apiA.online = false;
