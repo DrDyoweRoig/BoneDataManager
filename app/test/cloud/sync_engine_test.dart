@@ -808,6 +808,24 @@ void main() {
       expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
     });
 
+    test('two copies of one database on the same computer: their MAS-TEMP-1 groups get different numbers', () async {
+      final (a1, store1, api1) = await computer('pc-a');
+      final (a2, store2, api2) = await computer('pc-a'); // e.g. the database opened again in another folder
+      api1.online = false;
+      api2.online = false;
+      final first = (await a1.createEntries([t('M1')], 'AP')).single;
+      final second = (await a2.createEntries([t('M2')], 'AP')).single;
+      expect([first.refId, second.refId], ['MAS-TEMP-1', 'MAS-TEMP-1']);
+      api1.online = true;
+      api2.online = true;
+      await a1.syncNow();
+      await a2.syncNow();
+      final n1 = (await store1.entryById(first.id))!.number;
+      final n2 = (await store2.entryById(second.id))!.number;
+      expect([n1, n2], [1, 2]);
+      expect(server.entries('db1').map((e) => '${e.number} ${e.data.toothType}'), ['1 M1', '2 M2']);
+    });
+
     test('compactRefIds offline throws CloudOffline', () async {
       final (a, _, apiA) = await computer('pc-a');
       apiA.online = false;

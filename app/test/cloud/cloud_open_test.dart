@@ -22,7 +22,7 @@ void main() {
     final tmp = await Directory.systemTemp.createTemp('bdm_open');
     final store = await createLocalCopy(api: api, cloudId: 'db1', folder: tmp.path, deviceId: 'pc-a');
     expect(store.file!.uri.pathSegments.last, 'Site-A.sqlite');
-    expect([store.cloudId, store.deviceId, store.def.name], ['db1', 'pc-a', 'Site/A']);
+    expect([store.cloudId, store.deviceId!.startsWith('pc-a:'), store.def.name], ['db1', true, 'Site/A']);
     expect((await store.allEntries()).single.refId, 'MAS-0001');
     await store.close();
     await tmp.delete(recursive: true);

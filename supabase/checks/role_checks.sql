@@ -51,6 +51,13 @@ begin
   n := public.claim_number(db, 'pc', 2, array[id1]);
   log := log || case when n = 1 then 'PASS a claim for an uploaded entry returns its number'
                      else 'FAIL claim for an uploaded entry returned ' || n end;
+  -- The same claim key for other entries (a copied file's TEMP group) is refused.
+  begin
+    perform public.claim_number(db, 'pc', 2, array[gen_random_uuid()]);
+    log := log || 'FAIL a claim key reused for other entries returned a number'::text;
+  exception when invalid_parameter_value then
+    log := log || 'PASS a claim key reused for other entries is refused'::text;
+  end;
   r := public.push_entry(db, jsonb_build_object('id', gen_random_uuid(), 'number', 2, 'ref_id', 'T-0002',
          'element_id', 'tibia', 'created_at', now(), 'modified_at', now()), 0, 0);
   log := log || case when r ->> 'status' = 'ok' then 'PASS a new entry with a claimed number is uploaded'

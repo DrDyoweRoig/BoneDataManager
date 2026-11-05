@@ -35,6 +35,14 @@ void main() {
     expect(server.nextNumber['db'], 3);
   });
 
+  test('a claim key reused with other entries (a copied file) is refused, not given the old number', () async {
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 'b']), 1);
+    await expectLater(api.claimNumber('db', 'dev', 1, ['z']), throwsA(isA<CloudDenied>()));
+    expect(await api.claimNumber('db', 'dev', 1, ['b', 'c']), 1); // the same group, grown or shrunk
+    expect(await api.claimNumber('db', 'dev', 1, []), 1);
+    expect(server.nextNumber['db'], 2);
+  });
+
   test('a new row needs a claimed number and the current epoch', () async {
     expect(() => api.pushEntry('db', _e('a', 5), baseVersion: 0, epoch: 0), throwsA(isA<CloudDenied>()));
     final n = await api.claimNumber('db', 'dev', -1, ['a']);

@@ -191,7 +191,10 @@ class LocalStore implements EntryWriter {
 
   // ───────────── Cloud sync support ─────────────
 
-  Future<void> linkToCloud(String cloudId, String deviceId) async {
+  /// Links this file to cloud database [cloudId]. Its device id is [installId] plus a fresh part, so two
+  /// copies made on one computer never share provisional-number claims.
+  Future<void> linkToCloud(String cloudId, String installId) async {
+    final deviceId = newLinkDeviceId(installId);
     await _db.update(_db.meta).write(
         MetaCompanion(cloudId: Value(cloudId), deviceId: Value(deviceId), numberingEpoch: const Value(null)));
     _cloudId = cloudId;

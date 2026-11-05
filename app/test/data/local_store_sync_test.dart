@@ -46,8 +46,19 @@ void main() {
 
   test('cloud link and device survive reopening', () async {
     expect(store.cloudId, 'cloud-1');
+    final id = store.deviceId;
     final s = await reopen();
-    expect([s.cloudId, s.deviceId], ['cloud-1', 'pc-a']);
+    expect([s.cloudId, s.deviceId], ['cloud-1', id]);
+  });
+
+  test('every link gets its own device id, so two copies on one computer never share claims', () async {
+    final first = store.deviceId!;
+    expect(first, startsWith('pc-a:'));
+    final other = await LocalStore.inMemory(def);
+    addTearDown(other.close);
+    await other.linkToCloud('cloud-1', 'pc-a');
+    expect(other.deviceId, startsWith('pc-a:'));
+    expect(other.deviceId, isNot(first));
   });
 
   test('offline entries get MAS-TEMP numbers that never repeat', () async {

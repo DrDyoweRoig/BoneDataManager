@@ -1,10 +1,15 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
 import '../ids/ref_id.dart';
 
 part 'local_db.g.dart';
+
+/// The device id a cloud link claims provisional numbers under: this installation's id plus a part made
+/// for this link, so a second copy of the database on the same computer never reuses the first one's claims.
+String newLinkDeviceId(String? installId) => '${installId ?? 'device'}:${const Uuid().v4()}';
 
 /// Single row: the database definition and the Ref ID counter.
 @DataClassName('MetaRow')
@@ -122,6 +127,11 @@ class LocalDb extends _$LocalDb {
               await m.addColumn(meta, meta.numberingEpoch);
               if (from >= 3) await m.addColumn(entries, entries.previousRefIds);
               await _convertBlockRowsToProvisional();
+              // Claims are keyed by device id: give this copy its own (files may have been copied).
+              final linked = await select(meta).getSingleOrNull();
+              if (linked?.cloudId != null) {
+                await update(meta).write(MetaCompanion(deviceId: Value(newLinkDeviceId(linked!.deviceId))));
+              }
               // drift writes the version after onUpgrade, outside this transaction; do it inside too so a
               // crash between commit and that write can't leave a converted file at v3.
               await customStatement('PRAGMA user_version = 4');

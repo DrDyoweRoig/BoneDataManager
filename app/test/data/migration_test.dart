@@ -135,6 +135,7 @@ void main() {
     }
     expect([byId['d']!.number, byId['e']!.number], [3, 4]);
     expect([byId['d']!.refId, byId['e']!.refId], ['HOL0003', 'HOL0004']);
+    expect(s.deviceId, startsWith('dev1:')); // its own claim key, even if the file was copied
     await s.close();
     expect(await _tempNext(f), 3);
     await tmp.delete(recursive: true);
@@ -149,6 +150,7 @@ void main() {
     final all = await s.allEntries();
     expect(all.map((e) => e.number), [3, 4, 7, 7, 8]);
     expect(all.every((e) => e.previousRefIds.isEmpty), isTrue);
+    expect(s.deviceId, 'dev1'); // not linked: no claims
     await s.close();
     expect(await _tempNext(f), 1);
     await tmp.delete(recursive: true);

@@ -232,7 +232,13 @@ class FakeCloudApi implements CloudApi {
     _checkWrite(db);
     final key = (db, device, provisional);
     final existing = server.claims[key];
-    if (existing != null) return _respond(existing.number);
+    if (existing != null) {
+      // Same key, other entries: a copied file whose TEMP group is another specimen (raises 22023).
+      if (existing.ids.isNotEmpty && ids.isNotEmpty && !ids.any(existing.ids.contains)) {
+        throw const CloudDenied('Claim key reused by a different copy');
+      }
+      return _respond(existing.number);
+    }
     // An entry of the group already reached the server (lost answer): reuse its number if still live.
     final held = [for (final id in ids) ?server.rows[db]?[id]?.$1]
       ..sort((a, b) => a.deleted != b.deleted ? (a.deleted ? 1 : -1) : a.number.compareTo(b.number));

@@ -23,7 +23,7 @@ void main() {
         deviceId: 'pc-a');
     expect(server.defs['db1']!.name, 'Site');
     expect(server.members['db1'], {'ap@example.com': 'owner', 'jm@lab.org': 'editor', 'v@lab.org': 'viewer'});
-    expect([store.cloudId, store.deviceId], ['db1', 'pc-a']);
+    expect([store.cloudId, store.deviceId!.startsWith('pc-a:')], ['db1', true]);
     await store.close();
     await tmp.delete(recursive: true);
   });

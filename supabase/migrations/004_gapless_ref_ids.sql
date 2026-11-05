@@ -38,15 +38,20 @@ drop function if exists public.claim_number(uuid, text, int, uuid[]);
 create or replace function public.claim_number(db uuid, device text, temp int, ids uuid[], temp_ref text default null)
 returns int language plpgsql security definer set search_path = public as $$
 declare
-  n int;
+  n    int;
+  held uuid[];
 begin
   perform public._require(db, array['owner', 'editor']);
   -- One claim at a time per database, and never during compact_ref_ids.
   perform 1 from public.databases d where d.id = db for no key update;
 
-  select c.number into n from public.temp_claims c
+  select c.number, c.ids into n, held from public.temp_claims c
   where c.database_id = db and c.device_id = device and c.temp_number = temp;
   if found then
+    -- The same key for other entries: a copied file whose TEMP group is another specimen.
+    if cardinality(held) > 0 and cardinality(claim_number.ids) > 0 and not (held && claim_number.ids) then
+      raise exception 'Claim key reused by a different copy' using errcode = '22023';
+    end if;
     return n;
   end if;
 
