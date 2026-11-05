@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:bone_data_manager/catalog/catalog.dart';
@@ -11,6 +12,7 @@ import 'package:bone_data_manager/schema/database_def.dart';
 import 'package:bone_data_manager/schema/layer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
@@ -91,6 +93,65 @@ void main() {
     test('other errors pass through unchanged', () {
       final e = StateError('bug');
       expect(mapCloudError(e), same(e));
+    });
+  });
+
+  group('number claims, compaction and epoch', () {
+    final requests = <http.Request>[];
+    late Object response;
+    late SupabaseCloudApi api;
+
+    setUp(() {
+      requests.clear();
+      final client = SupabaseClient('https://x.supabase.co', 'key',
+          httpClient: MockClient((req) async {
+            requests.add(req);
+            return http.Response(jsonEncode(response), 200,
+                request: req, headers: {'content-type': 'application/json'});
+          }),
+          authOptions: const AuthClientOptions(autoRefreshToken: false));
+      api = SupabaseCloudApi(client);
+    });
+
+    final entry = Entry(
+        id: 'e1', refId: 'X-1', number: 1, data: const EntryDraft(elementId: 'femur'), createdBy: '',
+        createdAt: DateTime.utc(2026), modifiedBy: '', modifiedAt: DateTime.utc(2026));
+
+    Map<String, Object?> body(int i) => Map<String, Object?>.from(jsonDecode(requests[i].body) as Map);
+
+    test('push_entry sends the epoch and maps stale', () async {
+      response = {'status': 'stale'};
+      final r = await api.pushEntry('db', entry, baseVersion: 0, epoch: 3);
+      expect(r, isA<PushStale>());
+      expect(requests.single.url.path, endsWith('/rpc/push_entry'));
+      expect(body(0)['epoch'], 3);
+      expect(body(0)['base_version'], 0);
+    });
+
+    test('push_entry still maps ok', () async {
+      response = {'status': 'ok', 'version': 2};
+      expect((await api.pushEntry('db', entry, baseVersion: 1, epoch: 0) as PushOk).version, 2);
+    });
+
+    test('claim_number sends the group ids and returns the number', () async {
+      response = 17;
+      expect(await api.claimNumber('db', 'dev', -1, ['a', 'b']), 17);
+      expect(body(0), {'db': 'db', 'device': 'dev', 'temp': -1, 'ids': ['a', 'b']});
+    });
+
+    test('compact_ref_ids maps epoch and changes', () async {
+      response = {
+        'epoch': 4,
+        'changes': [
+          {'id': 'a', 'number': 1, 'ref_id': 'X-1', 'previous_ref_ids': ['X-2']},
+          {'id': 'b', 'number': 2, 'ref_id': 'X-2', 'previous_ref_ids': []},
+        ]
+      };
+      final r = await api.compactRefIds('db');
+      expect(r.epoch, 4);
+      expect([for (final c in r.changes) '${c.id} ${c.number} ${c.refId} ${c.previousRefIds}'],
+          ['a 1 X-1 [X-2]', 'b 2 X-2 []']);
+      expect(requests.single.url.path, endsWith('/rpc/compact_ref_ids'));
     });
   });
 }

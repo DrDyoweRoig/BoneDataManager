@@ -1,0 +1,66 @@
+import 'package:bone_data_manager/cloud/cloud_api.dart';
+import 'package:bone_data_manager/entries/entry.dart';
+import 'package:bone_data_manager/schema/database_def.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../support/fake_cloud_api.dart';
+
+Entry _e(String id, int n, {bool deleted = false}) => Entry(
+    id: id,
+    number: n,
+    refId: 'X-$n',
+    data: EntryDraft(elementId: 'bone$id'),
+    createdBy: '',
+    createdAt: DateTime.utc(2026),
+    modifiedBy: '',
+    modifiedAt: DateTime.utc(2026),
+    deleted: deleted);
+
+void main() {
+  late FakeCloudServer server;
+  late FakeCloudApi api;
+
+  setUp(() async {
+    server = FakeCloudServer();
+    api = FakeCloudApi(server);
+    await api.createDatabase(const DatabaseDef(id: 'db', name: 'D', prefix: 'X-', digits: 1), nextNumber: 1);
+  });
+
+  test('claims are idempotent and reuse the number of an uploaded entry', () async {
+    expect(await api.claimNumber('db', 'dev', -1, ['a']), 1);
+    expect(await api.claimNumber('db', 'dev', -1, ['a']), 1);
+    expect(await api.claimNumber('db', 'dev', -2, ['b']), 2);
+    server.put('db', _e('c', 7));
+    expect(await api.claimNumber('db', 'other', -1, ['c']), 7);
+    expect(server.nextNumber['db'], 3);
+  });
+
+  test('a new row needs a claimed number and the current epoch', () async {
+    expect(() => api.pushEntry('db', _e('a', 5), baseVersion: 0, epoch: 0), throwsStateError);
+    final n = await api.claimNumber('db', 'dev', -1, ['a']);
+    expect(await api.pushEntry('db', _e('a', n), baseVersion: 0, epoch: 3), isA<PushStale>());
+    expect(await api.pushEntry('db', _e('a', n), baseVersion: 0, epoch: 0), isA<PushOk>());
+  });
+
+  test('compaction closes gaps, keeps pending claims live, bumps the epoch only on change', () async {
+    server.put('db', _e('a', 1));
+    server.put('db', _e('b', 4));
+    server.put('db', _e('del', 2, deleted: true));
+    server.nextNumber['db'] = 9;
+    // Claim 6 for an entry that is not uploaded yet; its number stays live.
+    server.claims[('db', 'dev', -1)] = (number: 6, ids: ['p']);
+    final r = await api.compactRefIds('db');
+    expect(r.epoch, 1);
+    expect([for (final c in r.changes) '${c.id} ${c.number} ${c.refId} ${c.previousRefIds}'], ['b 2 X-2 [X-4]']);
+    expect(server.claims[('db', 'dev', -1)]!.number, 3);
+    expect(server.nextNumber['db'], 4);
+    expect(server.rows['db']!['del']!.$1.number, 2); // deleted rows are left alone
+    final again = await api.compactRefIds('db');
+    expect(again.epoch, 1);
+    expect(again.changes, isEmpty);
+  });
+
+  test('only the owner compacts', () async {
+    await expectLater(FakeCloudApi(server, email: 'e@x.com').compactRefIds('db'), throwsA(isA<CloudDenied>()));
+  });
+}

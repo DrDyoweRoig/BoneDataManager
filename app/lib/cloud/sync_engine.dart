@@ -209,9 +209,11 @@ class SyncEngine implements EntryWriter {
     final e = await store.entryById(id);
     if (e == null) return;
     try {
-      switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(id))) {
+      switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(id), epoch: store.numberingEpoch ?? 0)) {
         case PushOk(:final version):
           await store.markSynced(id, version, pushedVersion: e.version);
+        case PushStale():
+          break; // numbers changed: stays pending, retried on the next round
         case PushConflict(:final server):
           await store.addConflict(server);
         case PushDuplicate(:final existing):
@@ -268,10 +270,12 @@ class SyncEngine implements EntryWriter {
         final e = await store.entryById(snapshot.id); // freshest local version
         if (e == null) continue;
         try {
-          switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(e.id))) {
+          switch (await api.pushEntry(_db, e, baseVersion: await store.baseVersion(e.id), epoch: store.numberingEpoch ?? 0)) {
             case PushOk(:final version):
               await store.markSynced(e.id, version, pushedVersion: e.version);
               pushed++;
+            case PushStale():
+              break; // stays pending, retried on the next round
             case PushConflict(:final server):
               await store.addConflict(server);
             case PushDuplicate(:final existing):
@@ -317,10 +321,12 @@ class SyncEngine implements EntryWriter {
       return;
     }
     if (keepMine) {
-      switch (await api.pushEntry(_db, c.mine, baseVersion: c.server.version)) {
+      switch (await api.pushEntry(_db, c.mine, baseVersion: c.server.version, epoch: store.numberingEpoch ?? 0)) {
         case PushOk(:final version):
           await store.markSynced(entryId, version);
           await store.removeConflict(entryId);
+        case PushStale():
+          break; // numbers changed meanwhile: the conflict stays, try again later
         case PushConflict(:final server):
           await store.addConflict(server); // changed again meanwhile: ask again
         case PushDuplicate(:final existing):
@@ -348,7 +354,7 @@ class SyncEngine implements EntryWriter {
           modifiedAt: DateTime.now().toUtc(),
           version: server.version,
           deleted: true);
-      switch (await api.pushEntry(_db, gone, baseVersion: server.version)) {
+      switch (await api.pushEntry(_db, gone, baseVersion: server.version, epoch: store.numberingEpoch ?? 0)) {
         case PushOk(:final version):
           await store.applyRemote(
               Entry(
@@ -364,6 +370,8 @@ class SyncEngine implements EntryWriter {
                   deleted: true),
               force: true);
           await store.removeConflict(mine.id);
+        case PushStale():
+          break; // numbers changed meanwhile: the conflict stays, try again later
         case PushConflict(:final server) || PushDuplicate(existing: final server):
           await store.addConflict(server, mineId: mine.id); // changed again meanwhile: ask again
       }

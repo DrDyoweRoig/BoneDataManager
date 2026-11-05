@@ -35,7 +35,6 @@ void main() {
     final tmp = await Directory.systemTemp.createTemp('bdm_open_phone');
     final store =
         await createLocalCopy(api: api, cloudId: 'db2', folder: tmp.path, deviceId: 'phone', allowOffline: false);
-    expect(server.blocks['db2'] ?? [], isEmpty);
     expect(server.nextNumber['db2'], 1);
     await store.close();
     await tmp.delete(recursive: true);

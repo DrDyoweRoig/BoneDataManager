@@ -275,9 +275,9 @@ void main() {
       return (engine, store, api);
     }
 
-    test('never reserves a number block', () async {
+    test('never claims a number just by opening', () async {
       await phone();
-      expect(server.blocks['db1'] ?? [], isEmpty);
+      expect(server.claims, isEmpty);
     });
 
     test('offline create is refused and leaves nothing behind', () async {
