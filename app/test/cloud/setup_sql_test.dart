@@ -9,7 +9,7 @@ void main() {
   String migration(String name) => File('../supabase/migrations/$name').readAsStringSync();
 
   test('contains every migration verbatim and in order', () {
-    final files = ['001_init.sql', '002_shared_ids.sql', '003_schema_version.sql'];
+    final files = ['001_init.sql', '002_shared_ids.sql', '003_schema_version.sql', '004_gapless_ref_ids.sql'];
     var at = -1;
     for (final f in files) {
       final body = migration(f);
@@ -21,6 +21,6 @@ void main() {
 
   test('declares the schema version the app expects', () {
     expect(setup, contains('select $kSchemaVersion'));
-    expect(migration('003_schema_version.sql'), contains('select $kSchemaVersion'));
+    expect(migration('004_gapless_ref_ids.sql'), contains('select $kSchemaVersion'));
   });
 }
