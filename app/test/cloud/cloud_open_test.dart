@@ -24,7 +24,6 @@ void main() {
     expect(store.file!.uri.pathSegments.last, 'Site-A.sqlite');
     expect([store.cloudId, store.deviceId, store.def.name], ['db1', 'pc-a', 'Site/A']);
     expect((await store.allEntries()).single.refId, 'MAS-0001');
-    expect(store.block, isNotNull);
     await store.close();
     await tmp.delete(recursive: true);
   });
@@ -36,7 +35,6 @@ void main() {
     final tmp = await Directory.systemTemp.createTemp('bdm_open_phone');
     final store =
         await createLocalCopy(api: api, cloudId: 'db2', folder: tmp.path, deviceId: 'phone', allowOffline: false);
-    expect(store.block, isNull);
     expect(server.blocks['db2'] ?? [], isEmpty);
     expect(server.nextNumber['db2'], 1);
     await store.close();

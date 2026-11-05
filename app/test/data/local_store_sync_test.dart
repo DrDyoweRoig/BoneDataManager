@@ -50,22 +50,21 @@ void main() {
     expect([s.cloudId, s.deviceId], ['cloud-1', 'pc-a']);
   });
 
-  test('block numbers: all-or-nothing when the block is too small', () async {
-    await store.setBlock(50, 52);
-    await expectLater(store.createEntriesFromBlock([femur, femur, femur, femur], 'AP'), throwsA(isA<NoNumbersLeft>()));
-    expect(await store.allEntries(), isEmpty);
-    final made = await store.createEntriesFromBlock([femur, femur], 'AP');
-    expect(made.map((e) => e.refId), ['MAS-0050', 'MAS-0051']);
-    expect(store.block, (next: 52, end: 52));
-    expect((await store.pendingEntries()).length, 2);
+  test('offline entries get MAS-TEMP numbers that never repeat', () async {
+    final made = await store.createProvisional([femur, femur], 'AP');
+    expect(made.map((e) => e.refId), ['MAS-TEMP-1', 'MAS-TEMP-2']);
+    expect(made.map((e) => e.number), [-1, -2]);
+    expect(store.nextProvisional, 3);
+    await store.deleteEntry(made.last.id, 'AP');
+    expect((await store.createProvisional([femur], 'AP')).single.refId, 'MAS-TEMP-3');
+    expect((await store.pendingEntries()).length, 3);
   });
 
   test('pending changes survive reopening', () async {
-    await store.setBlock(50, 99);
-    await store.createEntriesFromBlock([femur], 'AP');
+    await store.createProvisional([femur], 'AP');
     final s = await reopen();
-    expect((await s.pendingEntries()).single.refId, 'MAS-0050');
-    expect(s.block, (next: 51, end: 99));
+    expect((await s.pendingEntries()).single.refId, 'MAS-TEMP-1');
+    expect(s.nextProvisional, 2);
   });
 
   test('synced rows become pending when edited, keeping their base version', () async {

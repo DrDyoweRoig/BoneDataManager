@@ -112,14 +112,13 @@ void main() {
 
   test('I3: restoring a backup of a cloud copy gives a local-only database', () async {
     await store.linkToCloud('cloud-1', 'pc-a');
-    await store.setBlock(50, 99);
-    await store.createEntriesFromBlock([const EntryDraft(elementId: 'femur', side: Side.right)], 'AP');
+    await store.createProvisional([const EntryDraft(elementId: 'femur', side: Side.right)], 'AP');
     final s = service();
     clock = DateTime(2026, 10, 23, 9);
     final b = (await s.backup(store, exportedBy: 'AP'))!;
     final f = await s.restore(b, Directory('${tmp.path}/db'));
     final r = await LocalStore.open(f);
-    expect([r.cloudId, r.deviceId, r.block], [null, null, null]);
+    expect([r.cloudId, r.deviceId], [null, null]);
     expect(await r.pendingEntries(), isEmpty);
     expect((await r.allEntries()).length, 2);
     await r.close();

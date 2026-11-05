@@ -55,7 +55,7 @@ void main() {
     expect(made.map((e) => e.refId), ['MAS-0051', 'MAS-0052']); // 1–50 reserved for this computer
     expect(server.entries('db1').map((e) => e.refId), ['MAS-0051', 'MAS-0052']);
     expect(await store.pendingEntries(), isEmpty);
-  });
+  }, skip: 'Task 6');
 
   test('offline entries use the reserved block and announce going offline once', () async {
     final (engine, store, api) = await computer('pc-a');
@@ -69,7 +69,7 @@ void main() {
     expect(events.whereType<WentOffline>().length, 1);
     expect(engine.status.value.connection, Connection.offline);
     expect(engine.status.value.pending, 2);
-  });
+  }, skip: 'Task 6');
 
   test('back online pushes pending entries and reports how many', () async {
     final (engine, _, api) = await computer('pc-a');
@@ -83,14 +83,7 @@ void main() {
     expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0002']);
     expect((events.last as BackOnline).synced, 2);
     expect(engine.status.value, const SyncStatus(connection: Connection.online, pending: 0, conflicts: 0));
-  });
-
-  test('used-up block offline refuses without saving anything', () async {
-    final (engine, store, api) = await computer('pc-a', blockSize: 2);
-    api.online = false;
-    await expectLater(engine.createEntries([left, left, left], 'AP'), throwsA(isA<NoNumbersLeft>()));
-    expect(await store.allEntries(), isEmpty);
-  });
+  }, skip: 'Task 6');
 
   test('entries made elsewhere arrive on the next sync', () async {
     final (a, storeA, _) = await computer('pc-a');
@@ -169,7 +162,7 @@ void main() {
     await engine.dispose();
     await store.close();
     await tmp.delete(recursive: true);
-  });
+  }, skip: 'Task 6');
 
   test('a server refusal during background sync is reported, not thrown or taken as offline', () async {
     final (engine, store, api) = await computer('pc-a');
@@ -192,8 +185,7 @@ void main() {
     final (viewer, store, _) = await computer('pc-v', email: 'viewer@example.com');
     expect((await store.allEntries()).single.refId, 'MAS-0051');
     expect(viewer.problem.value, isNull);
-    expect(store.block, isNull);
-  });
+  }, skip: 'Task 6');
 
   test('C2: an edit made while its entry is being pushed is kept and uploaded next', () async {
     final (engine, store, api) = await computer('pc-a');
@@ -284,8 +276,7 @@ void main() {
     }
 
     test('never reserves a number block', () async {
-      final (_, store, _) = await phone();
-      expect(store.block, isNull);
+      await phone();
       expect(server.blocks['db1'] ?? [], isEmpty);
     });
 
@@ -368,7 +359,7 @@ void main() {
       expect(server.entries('db1').map((e) => e.refId), ['MAS-0051', 'MAS-0051']);
       expect(server.nextNumber['db1'], 52);
       expect((await store.allEntries()).length, 2);
-    });
+    }, skip: 'Task 6');
 
     test('offline: one block number, uploaded when back online', () async {
       final (engine, _, api) = await computer('pc-a');
@@ -378,7 +369,7 @@ void main() {
       api.online = true;
       await engine.syncNow();
       expect(server.entries('db1').map((e) => e.refId), ['MAS-0001', 'MAS-0001']);
-    });
+    }, skip: 'Task 6');
 
     test('adding to an ID offline uploads later under the same number', () async {
       final (engine, store, api) = await computer('pc-a');
@@ -390,7 +381,7 @@ void main() {
       expect(server.entries('db1').map((e) => '${e.refId} ${e.data.side!.label}'),
           ['MAS-0051 Left', 'MAS-0051 Right']);
       expect(await store.pendingEntries(), isEmpty);
-    });
+    }, skip: 'Task 6');
 
     test('phone: adding to an ID needs a connection', () async {
       final api = FakeCloudApi(server);

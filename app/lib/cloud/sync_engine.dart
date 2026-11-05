@@ -156,7 +156,7 @@ class SyncEngine implements EntryWriter {
       }
     }
     // Same ids: if the online attempt did reach the server, the upload matches it instead of duplicating.
-    final made = await store.createEntriesFromBlock(drafts, observer, ids: ids, sharedId: sharedId);
+    final made = await store.createProvisional(drafts, observer, ids: ids, sharedId: sharedId);
     await _publish();
     return made;
   }
@@ -258,16 +258,6 @@ class SyncEngine implements EntryWriter {
       if (_fingerprint(def) != _fingerprint(store.def)) {
         await store.updateDefinition(def);
         onDefinitionChanged?.call();
-      }
-
-      final b = store.block;
-      if (allowOffline && (b == null || b.end - b.next + 1 < blockSize / 2)) {
-        try {
-          final r = await api.reserveBlock(_db, store.deviceId!, blockSize);
-          await store.setBlock(r.start, r.end);
-        } on CloudDenied {
-          // Viewers get no numbers; they only read.
-        }
       }
 
       final conflicted = {for (final c in await store.conflicts()) c.mine.id};
