@@ -881,6 +881,29 @@ void main() {
       expect([b.status.value.pending, b.status.value.conflicts], [0, 0]);
     });
 
+    test('keeping my edit of the last row, deleted elsewhere and its number handed out again: a new number', () async {
+      final (a, _, _) = await computer('pc-a');
+      final (b, storeB, apiB) = await computer('pc-b');
+      final made = [for (final d in [left, left, right]) (await a.createEntries([d], 'AP')).single]; // R = #3
+      final r = made[2];
+      await b.syncNow();
+      apiB.online = false;
+      await b.updateEntry(r.id, const EntryDraft(elementId: 'femur', side: Side.right, values: {'n': 1}), 'JM');
+      await a.deleteEntry(r.id, 'AP');
+      await a.syncNow();
+      await a.compactRefIds(); // nothing moves, but the counter goes back to 3
+      final other = (await a.createEntries([left], 'AP')).single; // #3 again, another specimen
+      expect(other.number, 3);
+      apiB.online = true;
+      await b.syncNow();
+      await b.resolve(r.id, keepMine: true);
+      await b.syncNow();
+      final up = server.entries('db1').firstWhere((e) => e.id == r.id);
+      expect([up.deleted, up.number, up.previousRefIds], [false, 4, ['MAS-0003']]);
+      expect(server.entries('db1').where((e) => e.number == 3 && !e.deleted).map((e) => e.id), [other.id]);
+      expect((await storeB.entryById(r.id))!.refId, 'MAS-0004');
+    });
+
     test('a TEMP group created and deleted offline is dropped on sync and claims no number', () async {
       final (a, storeA, apiA) = await computer('pc-a');
       apiA.online = false;

@@ -167,8 +167,13 @@ begin
   insert into public.temp_claims (database_id, device_id, temp_number, number, ids)
   values (db, 'pc', 5, n2, array[id1, gen_random_uuid()]);
   update public.databases set next_number = n2 + 1 where id = db;
+  select numbering_epoch into n from public.databases where id = db;
   set local role authenticated;
   r := public.compact_ref_ids(db);
+  -- Nothing moved, but the counter went back to n2: a new epoch (a row deleted at n2 must not return on it).
+  log := log || case when (r ->> 'epoch')::int = n + 1 and jsonb_array_length(r -> 'changes') = 0
+                     then 'PASS lowering the counter starts a new numbering epoch'
+                     else 'FAIL counter lowered without a new epoch: ' || r::text end;
   select count(*) into n from public.temp_claims c where c.database_id = db and c.device_id = 'pc' and c.temp_number = 5;
   log := log || case when n = 0 then 'PASS compaction deletes a claim whose entries are gone from its number'
                      else 'FAIL a dead claim survived compaction' end;

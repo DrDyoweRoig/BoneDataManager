@@ -52,11 +52,17 @@ class FakeCloudServer {
     for (var i = 0; i < live.length; i++) {
       if (live[i] != i + 1) map[live[i]] = i + 1;
     }
+    final lowered = live.length + 1 < (nextNumber[db] ?? 1);
     nextNumber[db] = live.length + 1;
     // A claim neither pending nor at a live number is dead: a re-claim must not get a number that may now
     // be another specimen's.
     claims.removeWhere((k, c) => k.$1 == db && !live.contains(c.number));
-    if (map.isEmpty) return (epoch: epoch[db] ?? 0, changes: const []);
+    if (map.isEmpty) {
+      // Numbers above the live ones will be handed out again: a new epoch, so a row deleted with one of
+      // them takes a new number if it is undeleted (as after any compaction).
+      if (lowered) epoch[db] = (epoch[db] ?? 0) + 1;
+      return (epoch: epoch[db] ?? 0, changes: const []);
+    }
     final changes = <NumberChange>[];
     for (final e in entries(db)) {
       final n = map[e.number];

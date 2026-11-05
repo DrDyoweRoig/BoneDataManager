@@ -94,6 +94,7 @@ end $$;
 
 -- Close Ref ID gaps (Owner): live numbers become 1, 2, 3… in order. A changed row keeps its old Ref ID
 -- in previous_ref_ids; its version is not bumped, so pending edits on devices do not conflict.
+-- The epoch goes up when numbers change, or when next_number goes down (numbers get handed out again).
 -- Returns {"epoch": n, "changes": [{id, number, ref_id, previous_ref_ids}, …]}.
 create or replace function public.compact_ref_ids(db uuid)
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -102,6 +103,7 @@ declare
   dg        int;
   cur_epoch int;
   k         int;
+  old_next  int;
   lv        int[];
   olds      int[];
   news      int[];
@@ -109,7 +111,7 @@ declare
 begin
   perform public._require(db, array['owner']);
   -- Waits for running pushes and claims; new ones wait until this finishes.
-  select d.prefix, d.digits, d.numbering_epoch into p, dg, cur_epoch
+  select d.prefix, d.digits, d.numbering_epoch, d.next_number into p, dg, cur_epoch, old_next
   from public.databases d where d.id = db for update;
 
   if exists (select 1 from public.entries x where x.database_id = db and not x.deleted and x.number < 1) then
@@ -146,6 +148,13 @@ begin
   delete from public.temp_claims c where c.database_id = db and not (c.number = any (lv));
 
   if cardinality(olds) = 0 then
+    if k + 1 < old_next then
+      -- Numbers above the live ones will be handed out again: a new epoch, so a row deleted with one of
+      -- them takes a new number if it is undeleted (push_entry), as after any compaction.
+      update public.databases d set numbering_epoch = d.numbering_epoch + 1
+      where d.id = db
+      returning d.numbering_epoch into cur_epoch;
+    end if;
     return jsonb_build_object('epoch', cur_epoch, 'changes', '[]'::jsonb);
   end if;
 
