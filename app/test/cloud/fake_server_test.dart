@@ -86,6 +86,38 @@ void main() {
     expect(server.rows['db']!['a']!.$1.previousRefIds, ['X-TEMP-1']);
   });
 
+  test('a claim whose held rows are all deleted stays live through a compaction', () async {
+    server.put('db', _e('a', 4, deleted: true)); // a lost create, deleted elsewhere
+    server.put('db', _e('x', 1));
+    server.nextNumber['db'] = 5;
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 't']), 5); // offline teeth not uploaded yet
+    await api.compactRefIds('db'); // live: 1 and the claim 5 → 2
+    expect(server.claims[('db', 'dev', 1)]!.number, 2);
+    expect(server.nextNumber['db'], 3);
+    expect(await api.claimNumber('db', 'other', 1, ['o']), 3); // never this device's number
+    expect(await api.claimNumber('db', 'dev', 1, ['a', 't']), 2);
+    final tooth = Entry(
+        id: 't', number: 2, refId: 'X-2', data: const EntryDraft(elementId: 'bonet'), createdBy: '',
+        createdAt: DateTime.utc(2026), modifiedBy: '', modifiedAt: DateTime.utc(2026));
+    expect(await api.pushEntry('db', tooth, baseVersion: 0, epoch: server.epoch['db']!), isA<PushOk>());
+    expect(server.entries('db').where((e) => e.number == 2 && !e.deleted).map((e) => e.id), ['t']);
+  });
+
+  test('an uploaded claim follows its group through a compaction and holds no gap open', () async {
+    server.put('db', _e('gone', 1, deleted: true));
+    server.nextNumber['db'] = 2;
+    final n = await api.claimNumber('db', 'dev', 1, ['g']);
+    expect(n, 2);
+    await api.pushEntry('db', _e('g', n), baseVersion: 0, epoch: 0);
+    final r = await api.compactRefIds('db'); // 2 → 1
+    expect([for (final c in r.changes) '${c.id} ${c.number}'], ['g 1']);
+    expect(server.claims[('db', 'dev', 1)]!.number, 1);
+    expect(server.nextNumber['db'], 2);
+    final again = await api.compactRefIds('db');
+    expect(again.changes, isEmpty);
+    expect(server.nextNumber['db'], 2); // no phantom number kept live
+  });
+
   test('current numbers say which rows are deleted', () async {
     server.put('db', _e('a', 1));
     server.put('db', _e('b', 2, deleted: true));

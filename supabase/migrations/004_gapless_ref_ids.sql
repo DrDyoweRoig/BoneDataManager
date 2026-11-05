@@ -94,15 +94,18 @@ begin
     raise exception 'Some entries have an invalid Ref ID number' using errcode = '22023';
   end if;
 
-  -- Live numbers: those of live entries, plus claims none of whose entries is uploaded yet (a claim
-  -- without ids: no entry holds its number). A pending claim stays live even if a deleted row has its number.
+  -- Live numbers: those of live entries, plus claims none of whose entries is uploaded under the claim's
+  -- own number (a claim without ids: no entry holds its number). A pending claim stays live even if a
+  -- deleted row has its number, or its ids are deleted rows kept under an older number. Every claim is
+  -- renumbered with the same map below, so an uploaded group's claim keeps matching its rows.
   with live as (
     select x.number from public.entries x where x.database_id = db and not x.deleted
     union
     select c.number from public.temp_claims c
     where c.database_id = db
       and case when cardinality(c.ids) > 0
-               then not exists (select 1 from public.entries y where y.database_id = db and y.id = any (c.ids))
+               then not exists (select 1 from public.entries y
+                                where y.database_id = db and y.id = any (c.ids) and y.number = c.number)
                else not exists (select 1 from public.entries y where y.database_id = db and y.number = c.number)
           end
   ), m as (

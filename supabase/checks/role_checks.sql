@@ -126,6 +126,12 @@ begin
   n := public.claim_number(db, 'pc', 4, array[id1], 'T-TEMP-4');
   log := log || case when n = n2 then 'PASS a claim does not reuse the number of a deleted entry'
                      else 'FAIL claim for a deleted entry returned ' || n || ' (next was ' || n2 || ')' end;
+  -- Its entries are not uploaded under that number, so compaction keeps the claim's number live.
+  r := public.compact_ref_ids(db);
+  select c.number into n from public.temp_claims c where c.database_id = db and c.device_id = 'pc' and c.temp_number = 4;
+  log := log || case when (select d.next_number from public.databases d where d.id = db) > n
+                     then 'PASS a claim whose uploaded entries are deleted stays live in a compaction'
+                     else 'FAIL compaction dropped a claim whose entries are deleted' end;
   reset role;
   delete from public.entries where database_id = db and number = 600;
   update public.databases set next_number = n2 where id = db; -- keep the numbers the next checks expect

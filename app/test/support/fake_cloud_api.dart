@@ -26,11 +26,12 @@ class FakeCloudServer {
     _changes.add(db);
   }
 
-  /// A claim is pending while none of its entries is uploaded (without ids: while no entry holds its number).
+  /// A claim is pending while none of its entries is on the server under the claim's own number (without
+  /// ids: while no entry holds its number). Held rows that were deleted (and kept an old number) don't count.
   bool _pending(String db, ({int number, List<String> ids}) c) {
     final held = rows[db] ?? {};
     return c.ids.isNotEmpty
-        ? !c.ids.any(held.containsKey)
+        ? !c.ids.any((id) => held[id]?.$1.number == c.number)
         : !held.values.any((r) => r.$1.number == c.number);
   }
 
