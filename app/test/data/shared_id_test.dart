@@ -43,14 +43,15 @@ void main() {
 
   test('assignNumber renumbers the whole group and keeps the TEMP', () async {
     await store.linkToCloud('cloud', 'pc');
-    await store.createProvisional([tooth('M1'), tooth('M2')], 'AP', sharedId: true);
+    final made = await store.createProvisional([tooth('M1'), tooth('M2')], 'AP', sharedId: true);
+    await store.deleteEntry(made.last.id, 'AP'); // deleted rows are renumbered too
     final changes = await store.assignNumber(-1, 60);
     expect(changes.length, 2);
     final rows = await store.entriesIncludingDeleted();
     expect(rows.map((e) => e.number), [60, 60]);
     expect(rows.map((e) => e.refId), ['MAS-0060', 'MAS-0060']);
     expect(rows.map((e) => e.previousRefIds), [['MAS-TEMP-1'], ['MAS-TEMP-1']]);
-    expect(rows.map((e) => e.version), [1, 1]);
+    expect(rows.map((e) => e.version), [1, 2]);
     expect((await store.pendingEntries()).length, 2);
   });
 
@@ -64,6 +65,25 @@ void main() {
     expect((await store.entryById(a.id))!.number, 2);
     expect((await store.entryById(b.id))!.number, 1);
     expect(store.numberingEpoch, 4);
+    final ea = (await store.entryById(a.id))!, eb = (await store.entryById(b.id))!;
+    expect([ea.refId, eb.refId], ['MAS-0002', 'MAS-0001']);
+    expect([ea.previousRefIds, eb.previousRefIds], [['MAS-0001'], ['MAS-0002']]);
+  });
+
+  test('unlinking numbers pending TEMP groups from nextNumber and clears the epoch', () async {
+    await store.linkToCloud('cloud', 'pc');
+    await store.createEntries([tooth('C')], 'AP'); // #1, so nextNumber is 2
+    await store.createProvisional([tooth('M1'), tooth('M2')], 'AP', sharedId: true); // TEMP-1
+    await store.createProvisional([tooth('P4')], 'AP'); // TEMP-2
+    await store.applyNumbering([], epoch: 3);
+    await store.unlinkFromCloud();
+    final rows = await store.entriesIncludingDeleted();
+    expect(rows.map((e) => e.number), [1, 2, 2, 3]);
+    expect(rows.map((e) => e.refId), ['MAS-0001', 'MAS-0002', 'MAS-0002', 'MAS-0003']);
+    expect(rows.map((e) => e.previousRefIds), [[], ['MAS-TEMP-1'], ['MAS-TEMP-1'], ['MAS-TEMP-2']]);
+    expect(store.nextNumber, 4);
+    expect(store.numberingEpoch, isNull);
+    expect(await store.pendingEntries(), isEmpty);
   });
 
   test('compactLocal closes gaps in order and keeps groups', () async {

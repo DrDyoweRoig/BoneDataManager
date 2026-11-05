@@ -192,9 +192,11 @@ class LocalStore implements EntryWriter {
   // ───────────── Cloud sync support ─────────────
 
   Future<void> linkToCloud(String cloudId, String deviceId) async {
-    await _db.update(_db.meta).write(MetaCompanion(cloudId: Value(cloudId), deviceId: Value(deviceId)));
+    await _db.update(_db.meta).write(
+        MetaCompanion(cloudId: Value(cloudId), deviceId: Value(deviceId), numberingEpoch: const Value(null)));
     _cloudId = cloudId;
     _deviceId = deviceId;
+    _epoch = null;
   }
 
   /// Every row, deleted ones too (for uploads that must keep their numbers taken).
@@ -237,12 +239,7 @@ class LocalStore implements EntryWriter {
             await (_db.select(_db.entries)..where((e) => e.number.equals(provisional))).get();
         final changes = <NumberChange>[];
         for (final r in rows) {
-          changes.add((
-            id: r.id,
-            number: number,
-            refId: formatRefId(_def.prefix, _def.digits, number),
-            previousRefIds: [...(jsonDecode(r.previousRefIds) as List).cast<String>(), r.refId],
-          ));
+          changes.add(_renumbered(r, number));
         }
         await applyNumbering(changes);
         return changes;
@@ -265,6 +262,14 @@ class LocalStore implements EntryWriter {
         }
       });
 
+  /// [r] under [number]: new Ref ID, its old one appended to previousRefIds.
+  NumberChange _renumbered(EntryRow r, int number) => (
+        id: r.id,
+        number: number,
+        refId: formatRefId(_def.prefix, _def.digits, number),
+        previousRefIds: [...(jsonDecode(r.previousRefIds) as List).cast<String>(), r.refId],
+      );
+
   /// Closes gaps in a local-only database (cloud copies are numbered by the server).
   Future<List<NumberChange>> compactLocal() async {
     if (_cloudId != null) throw StateError('A cloud copy is compacted by the server');
@@ -277,12 +282,7 @@ class LocalStore implements EntryWriter {
       final changes = <NumberChange>[
         for (final r in live)
           if (map.containsKey(r.number))
-            (
-              id: r.id,
-              number: map[r.number]!,
-              refId: formatRefId(_def.prefix, _def.digits, map[r.number]!),
-              previousRefIds: [...(jsonDecode(r.previousRefIds) as List).cast<String>(), r.refId],
-            )
+            _renumbered(r, map[r.number]!)
       ];
       await applyNumbering(changes);
       final maxLive = live.fold<int>(0, (m, e) => e.number > m ? e.number : m);
@@ -400,12 +400,28 @@ class LocalStore implements EntryWriter {
 
   /// Restored copies stand alone: no cloud link, no number block, nothing pending or in conflict.
   Future<void> unlinkFromCloud() => _db.transaction(() async {
-        await _db.update(_db.meta).write(const MetaCompanion(
-            cloudId: Value(null),
-            deviceId: Value(null),
-            blockNext: Value(null),
-            blockEnd: Value(null),
-            lastPull: Value(null)));
+        // Pending TEMP groups become real numbers now: nobody else will ever number them.
+        var next = (await _db.select(_db.meta).getSingle()).nextNumber;
+        final temps = await (_db.select(_db.entries)..where((e) => e.number.isSmallerThanValue(0))).get();
+        final groups = {for (final t in temps) t.number}.toList()..sort((a, b) => b.compareTo(a));
+        final changes = <NumberChange>[];
+        for (final g in groups) {
+          for (final t in temps.where((t) => t.number == g)) {
+            changes.add(_renumbered(t, next));
+          }
+          next++;
+        }
+        await applyNumbering(changes);
+        await _db.update(_db.meta).write(MetaCompanion(
+            cloudId: const Value(null),
+            deviceId: const Value(null),
+            blockNext: const Value(null),
+            blockEnd: const Value(null),
+            lastPull: const Value(null),
+            numberingEpoch: const Value(null),
+            nextNumber: Value(next)));
+        _nextNumber = next;
+        _epoch = null;
         await _db.customUpdate("UPDATE entries SET sync_state = 'synced', base_version = version",
             updates: {_db.entries});
         await _db.delete(_db.conflicts).go();
