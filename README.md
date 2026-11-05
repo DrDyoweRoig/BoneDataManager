@@ -55,6 +55,10 @@ built-in server, each team connects its own. `tools/build_all.ps1` builds both e
 Server setup lives in `supabase/migrations/`; `python supabase/build_setup.py` regenerates the
 single setup script bundled in the app (`app/assets/supabase_setup.sql`).
 
+Existing servers must also run `supabase/migrations/004_gapless_ref_ids.sql` (new servers already
+include it in `app/assets/supabase_setup.sql`). Update the app on every computer and phone before
+using **Close Ref ID gaps**.
+
 ## Cite
 
 If you use Bone Data Manager in research, please cite it:

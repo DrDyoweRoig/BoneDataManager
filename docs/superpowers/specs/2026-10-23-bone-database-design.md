@@ -20,7 +20,7 @@ Aplicació per crear i omplir bases de dades d'observacions d'ossos humans, amb 
 |---|---|
 | Unitat d'entrada | **1 entrada = 1 os o 1 dent**, amb Ref ID propi. L'individu és un layer opcional. |
 | Excel | Font de veritat = núvol. Excel = **exportació** sota demanda. |
-| Sense connexió | Escriptori: pot **crear i editar** entrades offline; IDs de blocs reservats; avís efímer. Mòbil: sempre en línia. |
+| Sense connexió | Escriptori: pot **crear i editar** entrades offline; rep IDs provisionals `HOL-TEMP-n` que reben un número real en sincronitzar (vegeu [Ref IDs sense salts](2026-11-05-gapless-ref-ids-design.md)); avís efímer. Mòbil: sempre en línia. |
 | Usuaris | Comptes amb correu + rols **Owner / Editor / Viewer** + **Observer ID** en començar a editar. |
 | App mòbil | Introduir i consultar dades + exportar. **No** crea ni modifica l'estructura. |
 | Catàleg d'ossos | **Os sencer** (sense porcions). |
@@ -56,7 +56,7 @@ Mòduls del codi (cada un amb una responsabilitat clara):
 |---|---|
 | `catalog` | Llista fixa de regions, ossos (amb indicador de parell) i dents. Dades estàtiques. |
 | `schema` | Definició d'una base de dades: ossos seleccionats, layers, prefix. Validació. |
-| `ids` | Formatar Ref IDs, gestionar comptador i blocs reservats. |
+| `ids` | Formatar Ref IDs, IDs provisionals (`TEMP`), reclamació de números en sincronitzar i mapa de compactació. Sense blocs reservats. |
 | `teeth` | Expandir una selecció Jaw × Side × Type en llista d'entrades. |
 | `entries` | CRUD d'entrades, a través del repository. |
 | `sync` | Cua de canvis offline, pujada, descàrrega, detecció de conflictes. |
@@ -76,15 +76,15 @@ Mòduls del codi (cada un amb una responsabilitat clara):
 **`entries`**:
 `id` (UUID intern), `database_id`, `ref_id` (únic per base de dades), `element` (nom de l'os o `Tooth`), `region`, `dentition` (`Permanent` | `Deciduous` | null), `tooth_type` (null si no és dent), `jaw` (`Upper` | `Lower` | null), `side` (`Left` | `Right` | null), `values` (JSON: `layer_id → valor`), `created_by` (Observer ID), `created_at`, `modified_by`, `modified_at`, `version` (enter, per detectar conflictes), `deleted` (bool, esborrat lògic per sincronitzar).
 
-**`id_blocks`**: `database_id`, `device_id`, `start`, `end`, `next`. Cada escriptori té sempre un bloc reservat de **50** números per treballar offline.
+**`temp_claims`**: `database_id`, `device_id`, `temp_number`, `number`, `ids`. Guarda quin número real s'ha donat a cada grup provisional (`HOL-TEMP-n`) d'un dispositiu en sincronitzar; així una reclamació repetida (si la resposta es va perdre) retorna sempre el mateix número. Substitueix `id_blocks`, que s'elimina (ja no hi ha blocs reservats).
 
 ## 6. Ref IDs
 
 - Format: `prefix` + número amb zeros a l'esquerra fins a `digits` → `MAS-0001`. El prefix és opcional.
 - **En línia:** el número l'assigna una funció de Postgres amb bloqueig de fila → mai es repeteix.
-- **Fora de línia (escriptori):** s'agafa el següent número del bloc reservat del dispositiu. Quan torna la connexió, si el bloc s'ha gastat més de la meitat, se'n reserva un de nou.
-- Conseqüència acceptada: la numeració pot tenir salts.
-- Un Ref ID mai canvia un cop assignat i mai es reutilitza (ni després d'esborrar).
+- **Fora de línia (escriptori):** l'entrada rep un ID provisional `<prefix>TEMP-<n>` (p. ex. `HOL-TEMP-1`). Totes les dents d'un mateix grup comparteixen el mateix TEMP. En sincronitzar, el dispositiu reclama **un** número real per a cada TEMP (`claim_number`) i les entrades passen a tenir-lo; l'ID provisional queda a **Previous Ref IDs**.
+- Els números són correlatius: la numeració no té salts per disseny. Els salts que ja existeixen (blocs antics, entrades esborrades) es tanquen amb el botó **Close Ref ID gaps** (només Owner), que guarda l'ID anterior de cada entrada que canvia.
+- Un Ref ID no es reutilitza per a una altra entrada viva. Un canvi d'ID només es fa en compactar o en reclamar un número provisional, i queda registrat a Previous Ref IDs.
 
 ## 7. Catàleg d'ossos
 
@@ -154,7 +154,7 @@ Un cop activades, s'editen com qualsevol altre layer.
 - **Mòbil:** llegeix i escriu directament a Supabase; subscripció Realtime per veure canvis d'altres. Si perd connexió, mostra avís i no deixa desar fins que torni.
 - **Escriptori:** escriu sempre a SQLite; el *sync engine* puja la cua de canvis i aplica els canvis remots (Realtime quan hi ha connexió).
 - **Toasts:**
-  - En perdre connexió: *"You're offline. New entries will use this device's reserved IDs, so numbering may have gaps. Changes will sync automatically when you're back online."*
+  - En perdre connexió: *"You're offline. New entries get provisional IDs (HOL-TEMP-…) until this computer syncs. Changes will sync automatically when you're back online."* (amb el prefix de la base de dades en lloc de `HOL-`)
   - En recuperar-la: *"Back online — N entries synced."*
 - **Conflictes:** cada entrada té `version`. Si en pujar la versió remota és més nova que la que s'havia editat, es mostra un diàleg amb les dues versions camp a camp i l'usuari tria quina es queda.
 
@@ -186,7 +186,7 @@ Els permisos s'apliquen al servidor (Row Level Security de Supabase), no només 
 
 ## 14. Proves
 
-- **Unitàries:** format de Ref ID; assignació amb blocs offline; expansió Jaw × Side × Type; validació de layers; generació d'Excel (columnes i valors).
+- **Unitàries:** format de Ref ID; assignació amb IDs provisionals, reclamació i compactació; expansió Jaw × Side × Type; validació de layers; generació d'Excel (columnes i valors).
 - **Integració:** sync escriptori ↔ Supabase (offline → online, conflicte), permisos per rol.
 - **Manuals:** escriptori i mòbil alhora sobre la mateixa base de dades.
 
@@ -219,13 +219,20 @@ Els permisos s'apliquen al servidor (Row Level Security de Supabase), no només 
 - **Plataforma:** només **Android** de moment (iPhone més endavant, amb Mac o servei de compilació al núvol). Mateix projecte Flutter que l'escriptori.
 - **Funcions:** iniciar sessió; llista "Your cloud databases"; obrir-ne una; llista d'entrades amb cerca i filtres; New entry / editar / esborrar segons el rol; Observer ID; **exportar Excel i compartir-lo** (full de compartir d'Android).
 - **No té:** crear bases de dades, Structure, Members, Move to cloud, backups, Excel automàtic al costat, bases de dades locals.
-- **Dades:** còpia local interna (a la carpeta privada de l'app, sense preguntar) només per llegir i navegar; **desar sempre requereix connexió** (spec §10). Sense connexió: franja *"You're offline. You can browse, but saving needs a connection."* i Save respon *"You're offline. Saving needs a connection."*; mai s'usen blocs de números al mòbil.
+- **Dades:** còpia local interna (a la carpeta privada de l'app, sense preguntar) només per llegir i navegar; **desar sempre requereix connexió** (spec §10). Sense connexió: franja *"You're offline. You can browse, but saving needs a connection."* i Save respon *"You're offline. Saving needs a connection."*; el mòbil mai crea IDs provisionals (sempre desa amb número del servidor).
 - **Disseny:** llista d'entrades com a **targetes** (Ref ID gran; element · dent/jaw/side; primers valors de layers); botó flotant *New entry*; el formulari és el mateix (botons grans, scroll, Save fix).
 - **Distribució:** fitxer **APK** instal·lat directament als mòbils (sense Google Play de moment). Publicar a Google Play queda fora d'abast.
 
 ## 18. Ref ID compartit per a dents (acordat 2026-10-27)
 
-- En crear diverses dents alhora: *"Give all selected teeth the same Ref ID?"* No (per defecte) / Yes. Amb Yes, totes les dents reben **el mateix Ref ID** (un sol número del comptador o del bloc); una fila per dent.
+- En crear diverses dents alhora: *"Give all selected teeth the same Ref ID?"* No (per defecte) / Yes. Amb Yes, totes les dents reben **el mateix Ref ID** (un sol número; sense connexió, un sol TEMP); una fila per dent.
 - En editar una dent: **"Add teeth to <Ref ID>"** afegeix dents noves amb el mateix Ref ID. Una dent (Dentition + Tooth type + Jaw + Side) no pot repetir-se dins d'un mateix ID mentre no estigui esborrada: *"M1 · Lower · Left is already in PN-0007"*.
 - Regla nova de dades: el Ref ID ja **no** és únic per fila; és únic el conjunt (número, element, dentició, tipus de dent, maxil·lar, costat) entre files no esborrades. Els números mai es reutilitzen.
 - Funciona en local, núvol, escriptori sense connexió i mòbil (amb connexió). Només per a dents.
+
+## 19. Ref IDs sense salts (acordat 2026-11-05)
+
+- Els Ref IDs són correlatius. Ja no hi ha blocs reservats: en línia el número el reclama el servidor; sense connexió, l'escriptori assigna un ID provisional `<prefix>TEMP-<n>` que rep el número real en sincronitzar.
+- El botó **Close Ref ID gaps** (només Owner) tanca els salts que ja existeixen. L'ID anterior de cada entrada queda a **Previous Ref IDs**, visible a la fitxa i a l'Excel.
+- Els servidors existents han d'executar la migració `supabase/migrations/004_gapless_ref_ids.sql`.
+- Detall, decisions i proves: [Ref IDs sense salts — especificació](2026-11-05-gapless-ref-ids-design.md).
