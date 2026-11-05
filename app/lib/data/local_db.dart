@@ -116,10 +116,13 @@ class LocalDb extends _$LocalDb {
             await customStatement(_oneElementPerId);
           }
           if (from < 4) {
-            await m.addColumn(meta, meta.tempNext);
-            await m.addColumn(meta, meta.numberingEpoch);
-            if (from >= 3) await m.addColumn(entries, entries.previousRefIds);
-            await _convertBlockRowsToProvisional();
+            // One transaction: drift doesn't wrap onUpgrade, and a half-done step would break the next open.
+            await transaction(() async {
+              await m.addColumn(meta, meta.tempNext);
+              await m.addColumn(meta, meta.numberingEpoch);
+              if (from >= 3) await m.addColumn(entries, entries.previousRefIds);
+              await _convertBlockRowsToProvisional();
+            });
           }
         },
       );

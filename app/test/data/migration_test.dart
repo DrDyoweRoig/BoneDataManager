@@ -38,7 +38,8 @@ Future<void> writeV1File(File f) async {
 }
 
 /// Builds a database file as Plan 2 (schema version 3) wrote it.
-Future<void> writeV3File(File f, {required bool cloud, bool block = true}) async {
+Future<void> writeV3File(File f,
+    {required bool cloud, bool block = true, bool pending = true, List<String> extra = const []}) async {
   final exec = NativeDatabase(f);
   await exec.ensureOpen(_NoUser(3));
   String row(String id, int n, String ref, String? tooth, String state, int base) =>
@@ -65,9 +66,10 @@ Future<void> writeV3File(File f, {required bool cloud, bool block = true}) async
         "coalesce(tooth_type, ''), coalesce(jaw, ''), coalesce(side, '')) WHERE deleted = 0",
     "INSERT INTO meta VALUES ('db1', 'Holotype', 'HOL', 4, 11, '[\"femur\",\"teeth\"]', "
         "${cloud ? "'cloud1'" : 'NULL'}, 'dev1', ${block ? '10, 56' : 'NULL, NULL'}, NULL)",
-    row('a', 7, 'HOL0007', 'M1', 'pending', 0),
-    row('b', 7, 'HOL0007', 'M2', 'pending', 0),
-    row('c', 8, 'HOL0008', null, 'pending', 0),
+    row('a', 7, 'HOL0007', 'M1', pending ? 'pending' : 'synced', pending ? 0 : 1),
+    row('b', 7, 'HOL0007', 'M2', pending ? 'pending' : 'synced', pending ? 0 : 1),
+    row('c', 8, 'HOL0008', null, pending ? 'pending' : 'synced', pending ? 0 : 1),
+    ...extra,
     row('d', 3, 'HOL0003', null, 'synced', 1),
     row('e', 4, 'HOL0004', 'M1', 'pending', 2),
     'PRAGMA user_version = 3',
@@ -151,5 +153,48 @@ void main() {
     await s.close();
     expect(await _tempNext(f), 1);
     await tmp.delete(recursive: true);
+  });
+
+  test('v3 → v4 on a cloud file with a block but no pending rows leaves rows alone', () async {
+    final tmp = await Directory.systemTemp.createTemp('bdm_mig');
+    final f = File('${tmp.path}/v3.sqlite');
+    await writeV3File(f, cloud: true, pending: false);
+
+    final s = await LocalStore.open(f);
+    final all = await s.allEntries();
+    expect(all.map((e) => e.number), [3, 4, 7, 7, 8]);
+    expect(all.every((e) => e.previousRefIds.isEmpty), isTrue);
+    expect(s.block, isNull);
+    await s.close();
+    expect(await _tempNext(f), 1);
+    await tmp.delete(recursive: true);
+  });
+
+  test('v3 → v4 is atomic: a failure midway leaves the v3 file untouched and re-openable', () async {
+    final tmp = await Directory.systemTemp.createTemp('bdm_mig');
+    final f = File('${tmp.path}/v3.sqlite');
+    // A live synced femur-left row already at -2: converting c (#8) to -2 violates the unique index,
+    // after group #7 has already been converted.
+    final clash = "INSERT INTO entries VALUES ('x', -2, 'HOL-X', 'femur', NULL, NULL, NULL, 'left', '{}', 'AP', "
+        "1761300000, 'AP', 1761300000, 1, 0, 'synced', 1)";
+    await writeV3File(f, cloud: true, extra: [clash]);
+
+    await expectLater(LocalStore.open(f), throwsA(anything));
+
+    final raw = NativeDatabase(f);
+    await raw.ensureOpen(_NoUser(3));
+    final version = await raw.runSelect('PRAGMA user_version', []);
+    expect(version.single.values.single, 3);
+    final cols = await raw.runSelect('PRAGMA table_info(meta)', []);
+    expect(cols.map((r) => r['name']), isNot(contains('temp_next')));
+    final rows = await raw.runSelect("SELECT number, ref_id FROM entries WHERE id IN ('a','b')", []);
+    expect(rows.map((r) => r['number']), [7, 7]);
+    expect(rows.map((r) => r['ref_id']), ['HOL0007', 'HOL0007']);
+    await raw.close();
+    try {
+      await tmp.delete(recursive: true); // the failed open may still hold the file on Windows
+    } on FileSystemException {
+      // temp dir; fine to leave
+    }
   });
 }
