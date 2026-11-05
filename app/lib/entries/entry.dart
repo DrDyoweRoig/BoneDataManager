@@ -36,6 +36,7 @@ class Entry {
     this.number = 0,
     this.version = 1,
     this.deleted = false,
+    this.previousRefIds = const [],
   });
 
   final String id;
@@ -50,7 +51,13 @@ class Entry {
   final DateTime modifiedAt;
   final int version;
   final bool deleted;
+
+  /// Earlier Ref IDs of this entry (provisional or renumbered), oldest first.
+  final List<String> previousRefIds;
 }
+
+/// A Ref ID change applied to one entry (compaction or promoting a provisional number).
+typedef NumberChange = ({String id, int number, String refId, List<String> previousRefIds});
 
 String elementName(EntryDraft d) => d.elementId == kTeethId ? 'Tooth' : boneById(d.elementId).name;
 

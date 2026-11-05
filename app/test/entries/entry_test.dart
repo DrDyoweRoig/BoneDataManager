@@ -1,6 +1,7 @@
 import 'package:bone_data_manager/catalog/catalog.dart';
 import 'package:bone_data_manager/common/enums.dart';
 import 'package:bone_data_manager/entries/entry.dart';
+import 'package:bone_data_manager/entries/entry_json.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -27,5 +28,22 @@ void main() {
     expect(elementName(EntryDraft(elementId: kTeethId)), 'Tooth');
     expect(elementRegion(EntryDraft(elementId: 'femur')), Region.lowerLimb);
     expect(elementRegion(EntryDraft(elementId: kTeethId)), Region.teeth);
+  });
+
+  test('previous_ref_ids round-trips and defaults to empty', () {
+    final e = Entry(
+      id: 'a',
+      refId: 'HOL0001',
+      data: EntryDraft(elementId: kTeethId),
+      createdBy: 'AP',
+      createdAt: DateTime.utc(2026),
+      modifiedBy: 'AP',
+      modifiedAt: DateTime.utc(2026),
+      previousRefIds: ['HOL-TEMP-1', 'HOL0057'],
+    );
+    final json = entryToJson(e);
+    expect(json['previous_ref_ids'], ['HOL-TEMP-1', 'HOL0057']);
+    expect(entryFromJson(json).previousRefIds, ['HOL-TEMP-1', 'HOL0057']);
+    expect(entryFromJson(json..remove('previous_ref_ids')).previousRefIds, isEmpty);
   });
 }

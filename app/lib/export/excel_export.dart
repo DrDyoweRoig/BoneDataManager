@@ -19,7 +19,7 @@ List<int> buildWorkbookBytes(
   try {
     final sheet = workbook.worksheets[0]..name = 'Entries';
     final header = [
-      'Ref ID', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
+      'Ref ID', 'Previous Ref IDs', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
       for (final l in layers) l.name,
       'Created by', 'Created at', 'Modified by', 'Modified at',
     ];
@@ -31,6 +31,7 @@ List<int> buildWorkbookBytes(
       final d = e.data;
       _writeRow(sheet, i + 2, [
         e.refId,
+        e.previousRefIds.join('; '),
         elementName(d),
         elementRegion(d).label,
         d.dentition?.label ?? '',
