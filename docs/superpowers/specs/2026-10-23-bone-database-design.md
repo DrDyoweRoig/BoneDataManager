@@ -74,7 +74,7 @@ Mòduls del codi (cada un amb una responsabilitat clara):
 **`layers`**: `id`, `database_id`, `name`, `type` (`single_choice` | `multi_choice` | `yes_no` | `short_text` | `number` | `date`), `options` (llista, per als de tipus choice), `applies_to` (`all` | llista d'ossos | `teeth`), `order`.
 
 **`entries`**:
-`id` (UUID intern), `database_id`, `ref_id` (únic per base de dades), `element` (nom de l'os o `Tooth`), `region`, `dentition` (`Permanent` | `Deciduous` | null), `tooth_type` (null si no és dent), `jaw` (`Upper` | `Lower` | null), `side` (`Left` | `Right` | null), `values` (JSON: `layer_id → valor`), `created_by` (Observer ID), `created_at`, `modified_by`, `modified_at`, `version` (enter, per detectar conflictes), `deleted` (bool, esborrat lògic per sincronitzar).
+`id` (UUID intern), `database_id`, `ref_id` (compartit per les dents d'un mateix grup; és únic el conjunt número + element entre files vives, vegeu §18), `previous_ref_ids` (IDs anteriors, el més antic primer), `element` (nom de l'os o `Tooth`), `region`, `dentition` (`Permanent` | `Deciduous` | null), `tooth_type` (null si no és dent), `jaw` (`Upper` | `Lower` | null), `side` (`Left` | `Right` | null), `values` (JSON: `layer_id → valor`), `created_by` (Observer ID), `created_at`, `modified_by`, `modified_at`, `version` (enter, per detectar conflictes), `deleted` (bool, esborrat lògic per sincronitzar), `deleted_epoch` (la generació de numeració en què es va esborrar; vegeu la spec de Ref IDs sense salts §4).
 
 **`temp_claims`**: `database_id`, `device_id`, `temp_number`, `number`, `ids`. Guarda quin número real s'ha donat a cada grup provisional (`HOL-TEMP-n`) d'un dispositiu en sincronitzar; així una reclamació repetida (si la resposta es va perdre) retorna sempre el mateix número. Substitueix `id_blocks`, que s'elimina (ja no hi ha blocs reservats).
 
@@ -227,7 +227,7 @@ Els permisos s'apliquen al servidor (Row Level Security de Supabase), no només 
 
 - En crear diverses dents alhora: *"Give all selected teeth the same Ref ID?"* No (per defecte) / Yes. Amb Yes, totes les dents reben **el mateix Ref ID** (un sol número; sense connexió, un sol TEMP); una fila per dent.
 - En editar una dent: **"Add teeth to <Ref ID>"** afegeix dents noves amb el mateix Ref ID. Una dent (Dentition + Tooth type + Jaw + Side) no pot repetir-se dins d'un mateix ID mentre no estigui esborrada: *"M1 · Lower · Left is already in PN-0007"*.
-- Regla nova de dades: el Ref ID ja **no** és únic per fila; és únic el conjunt (número, element, dentició, tipus de dent, maxil·lar, costat) entre files no esborrades. Els números mai es reutilitzen.
+- Regla nova de dades: el Ref ID ja **no** és únic per fila; és únic el conjunt (número, element, dentició, tipus de dent, maxil·lar, costat) entre files no esborrades. Un número no es reutilitza sense prémer **Close Ref ID gaps**: en compactar, el número d'una entrada esborrada pot passar a una entrada viva (vegeu §19).
 - Funciona en local, núvol, escriptori sense connexió i mòbil (amb connexió). Només per a dents.
 
 ## 19. Ref IDs sense salts (acordat 2026-11-05)
