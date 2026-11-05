@@ -23,10 +23,10 @@ Entry _e(Side side, String by, {int version = 2, Map<String, Object?> values = c
 
 void main() {
   test('toast texts match the spec', () {
-    expect(syncEventMessage(WentOffline()),
-        "You're offline. New entries will use this device's reserved IDs, so numbering may have gaps. "
+    expect(syncEventMessage(WentOffline(), 'HOL-'),
+        "You're offline. New entries get provisional IDs (HOL-TEMP-…) until this computer syncs. "
         "Changes will sync automatically when you're back online.");
-    expect(syncEventMessage(BackOnline(12)), 'Back online — 12 entries synced.');
+    expect(syncEventMessage(BackOnline(12), 'HOL-'), 'Back online — 12 entries synced.');
   });
 
   testWidgets('status chip wording', (tester) async {

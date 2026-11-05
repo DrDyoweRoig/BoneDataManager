@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../entries/entry.dart';
 import '../export/cell_format.dart';
 import '../schema/layer.dart';
+import 'ref_id_marks.dart';
 
 /// One entry on a phone: Ref ID, what it is, and the first layer values.
 class EntryCard extends StatelessWidget {
@@ -38,7 +39,12 @@ class EntryCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(entry.refId, style: theme.textTheme.titleLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
+            RefIdLabel(entry: entry, style: theme.textTheme.titleLarge),
+            if (previousRefIdsText(entry) case final prev?)
+              Text(prev,
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
             const SizedBox(height: 2),
             Text(summary(entry), style: theme.textTheme.bodyMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
             if (values.isNotEmpty) ...[

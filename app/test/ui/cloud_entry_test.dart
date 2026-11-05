@@ -1,3 +1,4 @@
+import 'package:bone_data_manager/catalog/catalog.dart';
 import 'package:bone_data_manager/cloud/sync_engine.dart';
 import 'package:bone_data_manager/data/local_store.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
@@ -42,5 +43,37 @@ void main() {
     });
     await tester.pumpAndSettle();
     expect(server.entries('db1').single.refId, 'MAS-0001'); // the server's next number: no gaps
+  });
+
+  testWidgets('offline preview shows the next provisional Ref ID', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const def = DatabaseDef(id: 'db1', name: 'Site', prefix: 'HOL', selectedElements: {kTeethId});
+    final server = FakeCloudServer();
+    final (store, engine) = (await tester.runAsync(() async {
+      final api = FakeCloudApi(server);
+      await api.createDatabase(def, nextNumber: 1);
+      final s = await LocalStore.inMemory(def);
+      await s.linkToCloud('db1', 'pc-a');
+      final e = SyncEngine(s, api);
+      await e.syncNow();
+      api.online = false;
+      await e.syncNow();
+      return (s, e);
+    }))!;
+    addTearDown(() => tester.runAsync(() async {
+          await engine.dispose();
+          await store.close();
+        }));
+    await tester.pumpWidget(MaterialApp(
+        theme: buildTheme(Brightness.light),
+        home: EntryFormScreen(store: store, writer: engine, observer: 'AP')));
+    await tester.pumpAndSettle();
+    for (final t in ['Lower', 'Left', 'M1']) {
+      await tester.tap(find.text(t).last);
+      await tester.pumpAndSettle();
+    }
+    expect(find.textContaining('will be saved as HOL-TEMP-${store.nextProvisional} (provisional)'), findsOneWidget);
   });
 }

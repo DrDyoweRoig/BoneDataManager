@@ -4,6 +4,7 @@ import 'package:bone_data_manager/data/local_store.dart';
 import 'package:bone_data_manager/entries/entry.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
 import 'package:bone_data_manager/state/providers.dart';
+import 'package:bone_data_manager/ui/entry_card.dart';
 import 'package:bone_data_manager/ui/theme.dart';
 import 'package:bone_data_manager/ui/workspace_screen.dart';
 import 'package:flutter/material.dart';
@@ -57,5 +58,35 @@ void main() {
     // Unmount so drift's stream-cleanup timer fires inside the test.
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  Entry entry(int number, String refId, {List<String> previous = const []}) => Entry(
+      id: 'e$number',
+      number: number,
+      refId: refId,
+      data: const EntryDraft(elementId: 'femur', side: Side.left),
+      createdBy: 'AP',
+      createdAt: DateTime.utc(2026, 10, 25),
+      modifiedBy: 'AP',
+      modifiedAt: DateTime.utc(2026, 10, 25),
+      previousRefIds: previous);
+
+  Future<void> pumpCard(WidgetTester tester, Entry e) => tester.pumpWidget(MaterialApp(
+      theme: buildTheme(Brightness.light), home: Scaffold(body: EntryCard(entry: e, layers: const []))));
+
+  testWidgets('card: Provisional chip only for a negative number', (tester) async {
+    await pumpCard(tester, entry(-1, 'HOL-TEMP-1'));
+    expect(find.text('HOL-TEMP-1'), findsOneWidget);
+    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.byTooltip('Gets its final Ref ID when this computer syncs.'), findsOneWidget);
+    await pumpCard(tester, entry(7, 'HOL0007'));
+    expect(find.text('Provisional'), findsNothing);
+    expect(find.textContaining('Previously'), findsNothing);
+  });
+
+  testWidgets('card: Previously line lists the earlier Ref IDs', (tester) async {
+    await pumpCard(tester, entry(7, 'HOL0007', previous: ['HOL-TEMP-1', 'HOL0057']));
+    expect(find.text('Previously: HOL-TEMP-1, HOL0057'), findsOneWidget);
+    expect(find.text('Provisional'), findsNothing);
   });
 }

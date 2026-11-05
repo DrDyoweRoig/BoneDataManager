@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 
+import 'backup/backup_service.dart';
 import 'cloud/auth_service.dart';
 import 'cloud/cloud_config.dart';
 import 'cloud/cloud_connection.dart';
@@ -104,6 +107,16 @@ class BoneDataManagerApp extends ConsumerWidget {
                                               .rememberCopy(store.cloudId!, store.file!.path);
                                           ref.read(openStoreProvider.notifier).definitionChanged();
                                         },
+                                  onSyncFirst: () async => ref.read(syncEngineProvider)?.syncNow(),
+                                  onCloseGaps: () async {
+                                    final settings = await ref.read(settingsProvider.future);
+                                    await BackupService(Directory(settings.backupDir))
+                                        .backup(store, exportedBy: settings.observerId ?? '');
+                                    final engine = ref.read(syncEngineProvider);
+                                    final changes = await (engine?.compactRefIds() ?? store.compactLocal());
+                                    ref.read(openStoreProvider.notifier).definitionChanged();
+                                    return changes;
+                                  },
                                   onSaved: () => ref.read(openStoreProvider.notifier).definitionChanged(),
                                 ),
                               ),
