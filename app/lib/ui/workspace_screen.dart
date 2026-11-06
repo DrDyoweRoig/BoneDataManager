@@ -24,6 +24,7 @@ import 'conflict_dialog.dart';
 import 'entry_card.dart';
 import 'entry_form_screen.dart';
 import 'observer_dialog.dart';
+import 'ref_id_marks.dart';
 import 'sync_status_chip.dart';
 import 'widgets/select_chips.dart';
 
@@ -60,8 +61,10 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
     _syncEvents = engine?.events.listen((e) {
       // Phones show the offline banner instead; their saves never use reserved IDs.
       if (!mounted || isMobile) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(syncEventMessage(e)), duration: const Duration(seconds: 8)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(syncEventMessage(e, _store?.def.prefix ?? '')),
+        duration: const Duration(seconds: 8),
+      ));
     });
   }
 
@@ -156,7 +159,7 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
       context: context,
       builder: (c) => AlertDialog(
         title: Text('Delete ${e.refId}?'),
-        content: const Text('The entry is removed from lists and exports. Its Ref ID is not reused.'),
+        content: const Text('The entry is removed from lists and exports.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete')),
@@ -440,7 +443,11 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
               DataRow(
                 onSelectChanged: canEdit ? (_) => _openForm(store, e) : null,
                 cells: [
-                  DataCell(Text(e.refId, style: const TextStyle(fontWeight: FontWeight.w600))),
+                  DataCell(() {
+                    final label = RefIdLabel(entry: e, style: const TextStyle(fontWeight: FontWeight.w600));
+                    final prev = previousRefIdsText(e);
+                    return prev == null ? label : Tooltip(message: prev, child: label);
+                  }()),
                   DataCell(Text(elementName(e.data))),
                   DataCell(Text(elementRegion(e.data).label)),
                   DataCell(Text(e.data.dentition?.label ?? '')),

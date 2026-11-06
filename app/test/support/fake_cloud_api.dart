@@ -6,13 +6,19 @@ import 'package:bone_data_manager/ids/ref_id.dart';
 import 'package:bone_data_manager/schema/database_def.dart';
 
 /// In-memory stand-in for the Supabase project, shared by several [FakeCloudApi] clients
-/// (one per simulated computer). Mirrors the SQL rules in supabase/migrations/001_init.sql.
+/// (one per simulated computer). Mirrors the SQL rules in supabase/migrations/001_init.sql and 004_gapless_ref_ids.sql.
 class FakeCloudServer {
   final defs = <String, DatabaseDef>{};
   final nextNumber = <String, int>{};
   final rows = <String, Map<String, (Entry, DateTime)>>{};
-  final blocks = <String, List<({int start, int end})>>{};
+  final epoch = <String, int>{};
+
+  /// Numbers handed out to provisional groups, keyed (db, device, temp number); `ids` are the group's entry ids.
+  final claims = <(String, String, int), ({int number, List<String> ids})>{};
   final members = <String, Map<String, String>>{};
+
+  /// entries.deleted_epoch: the numbering epoch a row was deleted in (absent while live).
+  final deletedEpoch = <(String, String), int>{};
   final _changes = StreamController<String>.broadcast();
   var _tick = 0;
 
@@ -21,6 +27,84 @@ class FakeCloudServer {
   void _put(String db, Entry e) {
     rows.putIfAbsent(db, () => {})[e.id] = (e, _now());
     _changes.add(db);
+  }
+
+  /// A claim is pending while none of its entries is on the server under the claim's own number (without
+  /// ids: while no entry holds its number). Held rows that were deleted (and kept an old number) don't count.
+  bool _pending(String db, ({int number, List<String> ids}) c) {
+    final held = rows[db] ?? {};
+    return c.ids.isNotEmpty
+        ? !c.ids.any((id) => held[id]?.$1.number == c.number)
+        : !held.values.any((r) => r.$1.number == c.number);
+  }
+
+  /// Mirrors compact_ref_ids: live numbers (live entries + pending claims) become 1, 2, 3...
+  ({int epoch, List<NumberChange> changes}) compact(String db) {
+    final def = defs[db]!;
+    final live = <int>{
+      for (final r in (rows[db] ?? {}).values)
+        if (!r.$1.deleted) r.$1.number,
+      for (final e in claims.entries)
+        if (e.key.$1 == db && _pending(db, e.value)) e.value.number,
+    }.toList()
+      ..sort();
+    final map = <int, int>{};
+    for (var i = 0; i < live.length; i++) {
+      if (live[i] != i + 1) map[live[i]] = i + 1;
+    }
+    final lowered = live.length + 1 < (nextNumber[db] ?? 1);
+    nextNumber[db] = live.length + 1;
+    // A claim neither pending nor at a live number is dead: a re-claim must not get a number that may now
+    // be another specimen's.
+    claims.removeWhere((k, c) => k.$1 == db && !live.contains(c.number));
+    if (map.isEmpty) {
+      // Numbers above the live ones will be handed out again: a new epoch, so a row deleted with one of
+      // them takes a new number if it is undeleted (as after any compaction).
+      if (lowered) epoch[db] = (epoch[db] ?? 0) + 1;
+      return (epoch: epoch[db] ?? 0, changes: const []);
+    }
+    final changes = <NumberChange>[];
+    for (final e in entries(db)) {
+      final n = map[e.number];
+      if (e.deleted || n == null) continue;
+      final moved = Entry(
+          id: e.id,
+          number: n,
+          refId: formatRefId(def.prefix, def.digits, n),
+          data: e.data,
+          createdBy: e.createdBy,
+          createdAt: e.createdAt,
+          modifiedBy: e.modifiedBy,
+          modifiedAt: e.modifiedAt,
+          version: e.version,
+          deleted: e.deleted,
+          previousRefIds: [...e.previousRefIds, e.refId]);
+      _put(db, moved);
+      changes.add((id: moved.id, number: n, refId: moved.refId, previousRefIds: moved.previousRefIds));
+    }
+    for (final k in claims.keys.where((k) => k.$1 == db).toList()) {
+      final c = claims[k]!;
+      final n = map[c.number];
+      if (n != null) claims[k] = (number: n, ids: c.ids);
+    }
+    changes.sort((a, b) => a.number != b.number ? a.number.compareTo(b.number) : a.id.compareTo(b.id));
+    return (epoch: epoch[db] = (epoch[db] ?? 0) + 1, changes: changes);
+  }
+
+  /// Test helper: store a row as the server would (a deleted row counts as deleted now).
+  void put(String db, Entry e) {
+    _noteDeletion(db, e);
+    _put(db, e);
+  }
+
+  /// Keeps deleted_epoch: set when a row becomes deleted, cleared when it is live.
+  void _noteDeletion(String db, Entry e) {
+    final key = (db, e.id);
+    if (!e.deleted) {
+      deletedEpoch.remove(key);
+    } else if (!(rows[db]?[e.id]?.$1.deleted ?? false) || !deletedEpoch.containsKey(key)) {
+      deletedEpoch[key] = epoch[db] ?? 0;
+    }
   }
 
   List<Entry> entries(String db) =>
@@ -84,7 +168,7 @@ class FakeCloudApi implements CloudApi {
     if (!online) throw const CloudOffline('fake offline');
   }
 
-  Entry _with(Entry e, {int? version}) => Entry(
+  Entry _with(Entry e, {int? version, List<String>? previousRefIds}) => Entry(
       id: e.id,
       number: e.number,
       refId: e.refId,
@@ -94,7 +178,8 @@ class FakeCloudApi implements CloudApi {
       modifiedBy: e.modifiedBy,
       modifiedAt: e.modifiedAt,
       version: version ?? e.version,
-      deleted: e.deleted);
+      deleted: e.deleted,
+      previousRefIds: previousRefIds ?? e.previousRefIds);
 
   @override
   Future<List<CloudDb>> listDatabases() async {
@@ -118,10 +203,12 @@ class FakeCloudApi implements CloudApi {
     if (!server.defs.containsKey(def.id)) {
       server.defs[def.id] = def;
       server.nextNumber[def.id] = nextNumber;
+      server.epoch[def.id] = 0;
       server.members[def.id] = {email: 'owner'};
     }
     // Upload of the owner's own rows: insert or overwrite (on conflict do update).
     for (final e in rows) {
+      server._noteDeletion(def.id, e);
       server._put(def.id, e);
     }
     final maxN = server.entries(def.id).fold(0, (m, e) => e.number > m ? e.number : m);
@@ -167,34 +254,107 @@ class FakeCloudApi implements CloudApi {
   }
 
   @override
-  Future<({int start, int end})> reserveBlock(String db, String device, int size) async {
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids) async {
     _checkWrite(db);
-    if (size < 1 || size > 1000) throw const CloudDenied('Block size must be between 1 and 1000');
-    final s = server.nextNumber[db]!;
-    server.nextNumber[db] = s + size;
-    final b = (start: s, end: s + size - 1);
-    server.blocks.putIfAbsent(db, () => []).add(b);
-    return b;
+    final key = (db, device, provisional);
+    final existing = server.claims[key];
+    if (existing != null) {
+      // Same key, other entries: a copied file whose TEMP group is another specimen (raises 22023).
+      if (existing.ids.isNotEmpty && ids.isNotEmpty && !ids.any(existing.ids.contains)) {
+        throw const CloudDenied('Claim key reused by a different copy');
+      }
+      return _respond(existing.number);
+    }
+    // An entry of the group already reached the server (lost answer): reuse its number if still live.
+    final held = [for (final id in ids) ?server.rows[db]?[id]?.$1]
+      ..sort((a, b) => a.deleted != b.deleted ? (a.deleted ? 1 : -1) : a.number.compareTo(b.number));
+    // Only a live row's number is reused: a deleted row's number may belong to another specimen now.
+    final live = held.where((e) => !e.deleted).toList();
+    final n = live.isNotEmpty ? live.first.number : server.nextNumber[db]!;
+    if (live.isEmpty) server.nextNumber[db] = n + 1;
+    // The held rows keep the TEMP Ref ID the user saw (updated_at moves, version does not); the server
+    // works it out from the prefix.
+    final tempRef = provisionalRefId(server.defs[db]!.prefix, provisional);
+    for (final e in held) {
+      if (!e.previousRefIds.contains(tempRef)) {
+        server._put(db, _with(e, previousRefIds: [...e.previousRefIds, tempRef]));
+      }
+    }
+    server.claims[key] = (number: n, ids: List.of(ids));
+    return _respond(n);
   }
 
   @override
-  Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion}) async {
+  Future<int> numberingEpoch(String db) async {
+    _check();
+    return server.epoch[db] ?? 0;
+  }
+
+  @override
+  Future<List<ServerNumber>> currentNumbers(String db) async {
+    _check();
+    return [
+      for (final e in server.entries(db))
+        (
+          id: e.id,
+          number: e.number,
+          refId: e.refId,
+          previousRefIds: List<String>.of(e.previousRefIds),
+          deleted: e.deleted
+        )
+    ];
+  }
+
+  @override
+  Future<({int epoch, List<NumberChange> changes})> compactRefIds(String db) async {
+    _checkWrite();
+    if (denyWrites || server.members[db]?[email] != 'owner') {
+      throw const CloudDenied('You do not have permission for this database');
+    }
+    return _respond(server.compact(db));
+  }
+
+  @override
+  Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion, required int epoch}) async {
     _checkWrite(db);
     await onPush?.call(e);
     final cur = server.rows[db]?[e.id]?.$1;
+    if (cur == null) {
+      if (epoch != (server.epoch[db] ?? 0)) return PushStale();
+      // A new row's number must have been claimed, or join an existing (shared) Ref ID that is still live.
+      final claimed = server.claims.entries.any((c) => c.key.$1 == db && c.value.number == e.number);
+      final joinsExisting = server.entries(db).any((x) => x.number == e.number && !x.deleted);
+      // Supabase raises 22023, which the client maps to CloudDenied.
+      if (!claimed && !joinsExisting) throw CloudDenied('Number ${e.number} was not claimed');
+    }
+    // An undelete after a compaction (the row was deleted in an older epoch) takes a new number: its old
+    // one may be another specimen's now.
+    final freshNumber = cur != null && cur.deleted && !e.deleted &&
+        server.deletedEpoch[(db, e.id)] != (server.epoch[db] ?? 0);
     // Mirrors entries_one_element_per_id: one live row per element within a Ref ID.
-    if (!e.deleted) {
+    if (!e.deleted && !freshNumber) {
       for (final x in server.entries(db)) {
-        if (x.id != e.id && !x.deleted && x.number == e.number && _sameElement(x, e)) return PushDuplicate(x);
+        if (x.id != e.id && !x.deleted && x.number == (cur?.number ?? e.number) && _sameElement(x, e)) {
+          return PushDuplicate(x);
+        }
       }
     }
     if (cur == null) {
-      // A new row's number must come from a reserved block, or join an existing (shared) Ref ID.
-      final joinsExisting = server.entries(db).any((x) => x.number == e.number);
-      if (!joinsExisting && !(server.blocks[db] ?? []).any((b) => e.number >= b.start && e.number <= b.end)) {
-        throw StateError('Number ${e.number} was not reserved for offline use');
-      }
-      server._put(db, _with(e, version: 1));
+      final def = server.defs[db]!;
+      final row = Entry(
+          id: e.id,
+          number: e.number,
+          refId: formatRefId(def.prefix, def.digits, e.number), // the server's, not the client's
+          data: e.data,
+          createdBy: e.createdBy,
+          createdAt: e.createdAt,
+          modifiedBy: e.modifiedBy,
+          modifiedAt: e.modifiedAt,
+          version: 1,
+          deleted: e.deleted,
+          previousRefIds: e.previousRefIds);
+      server._noteDeletion(db, row);
+      server._put(db, row);
       return _respond(PushOk(1));
     }
     // base 0 = "my own creation" (an online create whose response was lost): matches version 1.
@@ -204,18 +364,31 @@ class FakeCloudApi implements CloudApi {
       return _sameContent(cur, e) ? PushOk(cur.version) : PushConflict(cur);
     }
     final v = cur.version + 1;
-    // The server keeps its own number and Ref ID for the row.
-    server._put(db, Entry(
+    // The server keeps its own number and Ref ID for the row, unless an undelete needs a new number.
+    var number = cur.number;
+    var refId = cur.refId;
+    var previous = cur.previousRefIds;
+    if (freshNumber) {
+      final def = server.defs[db]!;
+      number = server.nextNumber[db]!;
+      server.nextNumber[db] = number + 1;
+      refId = formatRefId(def.prefix, def.digits, number);
+      previous = [...previous, cur.refId];
+    }
+    final row = Entry(
         id: e.id,
-        number: cur.number,
-        refId: cur.refId,
+        number: number,
+        refId: refId,
         data: e.data,
         createdBy: cur.createdBy,
         createdAt: cur.createdAt,
         modifiedBy: e.modifiedBy,
         modifiedAt: e.modifiedAt,
         version: v,
-        deleted: e.deleted));
+        deleted: e.deleted,
+        previousRefIds: previous);
+    server._noteDeletion(db, row);
+    server._put(db, row);
     return _respond(PushOk(v));
   }
 

@@ -28,6 +28,14 @@ void main() {
 
   BackupService service() => BackupService(Directory('${tmp.path}/backups'), now: () => clock);
 
+  test('BackupFailed.guard reports any failure of the backup as BackupFailed', () async {
+    await expectLater(BackupFailed.guard(() async => throw StateError('sqlite said no')),
+        throwsA(isA<BackupFailed>().having((e) => '$e', 'message', contains('sqlite said no'))));
+    var ran = false;
+    await BackupFailed.guard(() async => ran = true);
+    expect(ran, isTrue);
+  });
+
   test('backup writes sqlite and xlsx with sanitised names', () async {
     final b = (await service().backup(store, exportedBy: 'AP'))!;
     expect(b.sqlite.existsSync(), isTrue);
@@ -112,14 +120,13 @@ void main() {
 
   test('I3: restoring a backup of a cloud copy gives a local-only database', () async {
     await store.linkToCloud('cloud-1', 'pc-a');
-    await store.setBlock(50, 99);
-    await store.createEntriesFromBlock([const EntryDraft(elementId: 'femur', side: Side.right)], 'AP');
+    await store.createProvisional([const EntryDraft(elementId: 'femur', side: Side.right)], 'AP');
     final s = service();
     clock = DateTime(2026, 10, 23, 9);
     final b = (await s.backup(store, exportedBy: 'AP'))!;
     final f = await s.restore(b, Directory('${tmp.path}/db'));
     final r = await LocalStore.open(f);
-    expect([r.cloudId, r.deviceId, r.block], [null, null, null]);
+    expect([r.cloudId, r.deviceId], [null, null]);
     expect(await r.pendingEntries(), isEmpty);
     expect((await r.allEntries()).length, 2);
     await r.close();

@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Version of the server setup this app needs (supabase/migrations; checked by Test connection).
-const kSchemaVersion = 3;
+const kSchemaVersion = 4;
 
 /// A team's own Supabase project: its address and public (anon / publishable) key. Never a secret key.
 class CloudConnection {

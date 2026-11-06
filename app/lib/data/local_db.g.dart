@@ -121,6 +121,29 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _tempNextMeta = const VerificationMeta(
+    'tempNext',
+  );
+  @override
+  late final GeneratedColumn<int> tempNext = GeneratedColumn<int>(
+    'temp_next',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
+  static const VerificationMeta _numberingEpochMeta = const VerificationMeta(
+    'numberingEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> numberingEpoch = GeneratedColumn<int>(
+    'numbering_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -134,6 +157,8 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
     blockNext,
     blockEnd,
     lastPull,
+    tempNext,
+    numberingEpoch,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -225,6 +250,21 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
         lastPull.isAcceptableOrUnknown(data['last_pull']!, _lastPullMeta),
       );
     }
+    if (data.containsKey('temp_next')) {
+      context.handle(
+        _tempNextMeta,
+        tempNext.isAcceptableOrUnknown(data['temp_next']!, _tempNextMeta),
+      );
+    }
+    if (data.containsKey('numbering_epoch')) {
+      context.handle(
+        _numberingEpochMeta,
+        numberingEpoch.isAcceptableOrUnknown(
+          data['numbering_epoch']!,
+          _numberingEpochMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -278,6 +318,14 @@ class $MetaTable extends Meta with TableInfo<$MetaTable, MetaRow> {
         DriftSqlType.string,
         data['${effectivePrefix}last_pull'],
       ),
+      tempNext: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}temp_next'],
+      )!,
+      numberingEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}numbering_epoch'],
+      ),
     );
   }
 
@@ -299,6 +347,8 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
   final int? blockNext;
   final int? blockEnd;
   final String? lastPull;
+  final int tempNext;
+  final int? numberingEpoch;
   const MetaRow({
     required this.id,
     required this.name,
@@ -311,6 +361,8 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     this.blockNext,
     this.blockEnd,
     this.lastPull,
+    required this.tempNext,
+    this.numberingEpoch,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -335,6 +387,10 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     }
     if (!nullToAbsent || lastPull != null) {
       map['last_pull'] = Variable<String>(lastPull);
+    }
+    map['temp_next'] = Variable<int>(tempNext);
+    if (!nullToAbsent || numberingEpoch != null) {
+      map['numbering_epoch'] = Variable<int>(numberingEpoch);
     }
     return map;
   }
@@ -362,6 +418,10 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       lastPull: lastPull == null && nullToAbsent
           ? const Value.absent()
           : Value(lastPull),
+      tempNext: Value(tempNext),
+      numberingEpoch: numberingEpoch == null && nullToAbsent
+          ? const Value.absent()
+          : Value(numberingEpoch),
     );
   }
 
@@ -382,6 +442,8 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       blockNext: serializer.fromJson<int?>(json['blockNext']),
       blockEnd: serializer.fromJson<int?>(json['blockEnd']),
       lastPull: serializer.fromJson<String?>(json['lastPull']),
+      tempNext: serializer.fromJson<int>(json['tempNext']),
+      numberingEpoch: serializer.fromJson<int?>(json['numberingEpoch']),
     );
   }
   @override
@@ -399,6 +461,8 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       'blockNext': serializer.toJson<int?>(blockNext),
       'blockEnd': serializer.toJson<int?>(blockEnd),
       'lastPull': serializer.toJson<String?>(lastPull),
+      'tempNext': serializer.toJson<int>(tempNext),
+      'numberingEpoch': serializer.toJson<int?>(numberingEpoch),
     };
   }
 
@@ -414,6 +478,8 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     Value<int?> blockNext = const Value.absent(),
     Value<int?> blockEnd = const Value.absent(),
     Value<String?> lastPull = const Value.absent(),
+    int? tempNext,
+    Value<int?> numberingEpoch = const Value.absent(),
   }) => MetaRow(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -426,6 +492,10 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     blockNext: blockNext.present ? blockNext.value : this.blockNext,
     blockEnd: blockEnd.present ? blockEnd.value : this.blockEnd,
     lastPull: lastPull.present ? lastPull.value : this.lastPull,
+    tempNext: tempNext ?? this.tempNext,
+    numberingEpoch: numberingEpoch.present
+        ? numberingEpoch.value
+        : this.numberingEpoch,
   );
   MetaRow copyWithCompanion(MetaCompanion data) {
     return MetaRow(
@@ -444,6 +514,10 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
       blockNext: data.blockNext.present ? data.blockNext.value : this.blockNext,
       blockEnd: data.blockEnd.present ? data.blockEnd.value : this.blockEnd,
       lastPull: data.lastPull.present ? data.lastPull.value : this.lastPull,
+      tempNext: data.tempNext.present ? data.tempNext.value : this.tempNext,
+      numberingEpoch: data.numberingEpoch.present
+          ? data.numberingEpoch.value
+          : this.numberingEpoch,
     );
   }
 
@@ -460,7 +534,9 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
           ..write('deviceId: $deviceId, ')
           ..write('blockNext: $blockNext, ')
           ..write('blockEnd: $blockEnd, ')
-          ..write('lastPull: $lastPull')
+          ..write('lastPull: $lastPull, ')
+          ..write('tempNext: $tempNext, ')
+          ..write('numberingEpoch: $numberingEpoch')
           ..write(')'))
         .toString();
   }
@@ -478,6 +554,8 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
     blockNext,
     blockEnd,
     lastPull,
+    tempNext,
+    numberingEpoch,
   );
   @override
   bool operator ==(Object other) =>
@@ -493,7 +571,9 @@ class MetaRow extends DataClass implements Insertable<MetaRow> {
           other.deviceId == this.deviceId &&
           other.blockNext == this.blockNext &&
           other.blockEnd == this.blockEnd &&
-          other.lastPull == this.lastPull);
+          other.lastPull == this.lastPull &&
+          other.tempNext == this.tempNext &&
+          other.numberingEpoch == this.numberingEpoch);
 }
 
 class MetaCompanion extends UpdateCompanion<MetaRow> {
@@ -508,6 +588,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
   final Value<int?> blockNext;
   final Value<int?> blockEnd;
   final Value<String?> lastPull;
+  final Value<int> tempNext;
+  final Value<int?> numberingEpoch;
   final Value<int> rowid;
   const MetaCompanion({
     this.id = const Value.absent(),
@@ -521,6 +603,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     this.blockNext = const Value.absent(),
     this.blockEnd = const Value.absent(),
     this.lastPull = const Value.absent(),
+    this.tempNext = const Value.absent(),
+    this.numberingEpoch = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MetaCompanion.insert({
@@ -535,6 +619,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     this.blockNext = const Value.absent(),
     this.blockEnd = const Value.absent(),
     this.lastPull = const Value.absent(),
+    this.tempNext = const Value.absent(),
+    this.numberingEpoch = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        name = Value(name),
@@ -554,6 +640,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     Expression<int>? blockNext,
     Expression<int>? blockEnd,
     Expression<String>? lastPull,
+    Expression<int>? tempNext,
+    Expression<int>? numberingEpoch,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -568,6 +656,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
       if (blockNext != null) 'block_next': blockNext,
       if (blockEnd != null) 'block_end': blockEnd,
       if (lastPull != null) 'last_pull': lastPull,
+      if (tempNext != null) 'temp_next': tempNext,
+      if (numberingEpoch != null) 'numbering_epoch': numberingEpoch,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -584,6 +674,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     Value<int?>? blockNext,
     Value<int?>? blockEnd,
     Value<String?>? lastPull,
+    Value<int>? tempNext,
+    Value<int?>? numberingEpoch,
     Value<int>? rowid,
   }) {
     return MetaCompanion(
@@ -598,6 +690,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
       blockNext: blockNext ?? this.blockNext,
       blockEnd: blockEnd ?? this.blockEnd,
       lastPull: lastPull ?? this.lastPull,
+      tempNext: tempNext ?? this.tempNext,
+      numberingEpoch: numberingEpoch ?? this.numberingEpoch,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -638,6 +732,12 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
     if (lastPull.present) {
       map['last_pull'] = Variable<String>(lastPull.value);
     }
+    if (tempNext.present) {
+      map['temp_next'] = Variable<int>(tempNext.value);
+    }
+    if (numberingEpoch.present) {
+      map['numbering_epoch'] = Variable<int>(numberingEpoch.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -658,6 +758,8 @@ class MetaCompanion extends UpdateCompanion<MetaRow> {
           ..write('blockNext: $blockNext, ')
           ..write('blockEnd: $blockEnd, ')
           ..write('lastPull: $lastPull, ')
+          ..write('tempNext: $tempNext, ')
+          ..write('numberingEpoch: $numberingEpoch, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -1109,6 +1211,18 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _previousRefIdsMeta = const VerificationMeta(
+    'previousRefIds',
+  );
+  @override
+  late final GeneratedColumn<String> previousRefIds = GeneratedColumn<String>(
+    'previous_ref_ids',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1128,6 +1242,7 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
     deleted,
     syncState,
     baseVersion,
+    previousRefIds,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1265,6 +1380,15 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
         ),
       );
     }
+    if (data.containsKey('previous_ref_ids')) {
+      context.handle(
+        _previousRefIdsMeta,
+        previousRefIds.isAcceptableOrUnknown(
+          data['previous_ref_ids']!,
+          _previousRefIdsMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1342,6 +1466,10 @@ class $EntriesTable extends Entries with TableInfo<$EntriesTable, EntryRow> {
         DriftSqlType.int,
         data['${effectivePrefix}base_version'],
       )!,
+      previousRefIds: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}previous_ref_ids'],
+      )!,
     );
   }
 
@@ -1369,6 +1497,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
   final bool deleted;
   final String syncState;
   final int baseVersion;
+  final String previousRefIds;
   const EntryRow({
     required this.id,
     required this.number,
@@ -1387,6 +1516,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     required this.deleted,
     required this.syncState,
     required this.baseVersion,
+    required this.previousRefIds,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1416,6 +1546,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     map['deleted'] = Variable<bool>(deleted);
     map['sync_state'] = Variable<String>(syncState);
     map['base_version'] = Variable<int>(baseVersion);
+    map['previous_ref_ids'] = Variable<String>(previousRefIds);
     return map;
   }
 
@@ -1442,6 +1573,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       deleted: Value(deleted),
       syncState: Value(syncState),
       baseVersion: Value(baseVersion),
+      previousRefIds: Value(previousRefIds),
     );
   }
 
@@ -1468,6 +1600,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       deleted: serializer.fromJson<bool>(json['deleted']),
       syncState: serializer.fromJson<String>(json['syncState']),
       baseVersion: serializer.fromJson<int>(json['baseVersion']),
+      previousRefIds: serializer.fromJson<String>(json['previousRefIds']),
     );
   }
   @override
@@ -1491,6 +1624,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       'deleted': serializer.toJson<bool>(deleted),
       'syncState': serializer.toJson<String>(syncState),
       'baseVersion': serializer.toJson<int>(baseVersion),
+      'previousRefIds': serializer.toJson<String>(previousRefIds),
     };
   }
 
@@ -1512,6 +1646,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     bool? deleted,
     String? syncState,
     int? baseVersion,
+    String? previousRefIds,
   }) => EntryRow(
     id: id ?? this.id,
     number: number ?? this.number,
@@ -1530,6 +1665,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     deleted: deleted ?? this.deleted,
     syncState: syncState ?? this.syncState,
     baseVersion: baseVersion ?? this.baseVersion,
+    previousRefIds: previousRefIds ?? this.previousRefIds,
   );
   EntryRow copyWithCompanion(EntriesCompanion data) {
     return EntryRow(
@@ -1558,6 +1694,9 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
       baseVersion: data.baseVersion.present
           ? data.baseVersion.value
           : this.baseVersion,
+      previousRefIds: data.previousRefIds.present
+          ? data.previousRefIds.value
+          : this.previousRefIds,
     );
   }
 
@@ -1580,7 +1719,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
           ..write('version: $version, ')
           ..write('deleted: $deleted, ')
           ..write('syncState: $syncState, ')
-          ..write('baseVersion: $baseVersion')
+          ..write('baseVersion: $baseVersion, ')
+          ..write('previousRefIds: $previousRefIds')
           ..write(')'))
         .toString();
   }
@@ -1604,6 +1744,7 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
     deleted,
     syncState,
     baseVersion,
+    previousRefIds,
   );
   @override
   bool operator ==(Object other) =>
@@ -1625,7 +1766,8 @@ class EntryRow extends DataClass implements Insertable<EntryRow> {
           other.version == this.version &&
           other.deleted == this.deleted &&
           other.syncState == this.syncState &&
-          other.baseVersion == this.baseVersion);
+          other.baseVersion == this.baseVersion &&
+          other.previousRefIds == this.previousRefIds);
 }
 
 class EntriesCompanion extends UpdateCompanion<EntryRow> {
@@ -1646,6 +1788,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
   final Value<bool> deleted;
   final Value<String> syncState;
   final Value<int> baseVersion;
+  final Value<String> previousRefIds;
   final Value<int> rowid;
   const EntriesCompanion({
     this.id = const Value.absent(),
@@ -1665,6 +1808,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     this.deleted = const Value.absent(),
     this.syncState = const Value.absent(),
     this.baseVersion = const Value.absent(),
+    this.previousRefIds = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   EntriesCompanion.insert({
@@ -1685,6 +1829,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     required bool deleted,
     this.syncState = const Value.absent(),
     this.baseVersion = const Value.absent(),
+    this.previousRefIds = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        number = Value(number),
@@ -1715,6 +1860,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     Expression<bool>? deleted,
     Expression<String>? syncState,
     Expression<int>? baseVersion,
+    Expression<String>? previousRefIds,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1735,6 +1881,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
       if (deleted != null) 'deleted': deleted,
       if (syncState != null) 'sync_state': syncState,
       if (baseVersion != null) 'base_version': baseVersion,
+      if (previousRefIds != null) 'previous_ref_ids': previousRefIds,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1757,6 +1904,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     Value<bool>? deleted,
     Value<String>? syncState,
     Value<int>? baseVersion,
+    Value<String>? previousRefIds,
     Value<int>? rowid,
   }) {
     return EntriesCompanion(
@@ -1777,6 +1925,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
       deleted: deleted ?? this.deleted,
       syncState: syncState ?? this.syncState,
       baseVersion: baseVersion ?? this.baseVersion,
+      previousRefIds: previousRefIds ?? this.previousRefIds,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1835,6 +1984,9 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
     if (baseVersion.present) {
       map['base_version'] = Variable<int>(baseVersion.value);
     }
+    if (previousRefIds.present) {
+      map['previous_ref_ids'] = Variable<String>(previousRefIds.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1861,6 +2013,7 @@ class EntriesCompanion extends UpdateCompanion<EntryRow> {
           ..write('deleted: $deleted, ')
           ..write('syncState: $syncState, ')
           ..write('baseVersion: $baseVersion, ')
+          ..write('previousRefIds: $previousRefIds, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2117,6 +2270,8 @@ typedef $$MetaTableCreateCompanionBuilder = MetaCompanion Function({
   Value<int?> blockNext,
   Value<int?> blockEnd,
   Value<String?> lastPull,
+  Value<int> tempNext,
+  Value<int?> numberingEpoch,
   Value<int> rowid,
 });
 typedef $$MetaTableUpdateCompanionBuilder = MetaCompanion Function({
@@ -2131,6 +2286,8 @@ typedef $$MetaTableUpdateCompanionBuilder = MetaCompanion Function({
   Value<int?> blockNext,
   Value<int?> blockEnd,
   Value<String?> lastPull,
+  Value<int> tempNext,
+  Value<int?> numberingEpoch,
   Value<int> rowid,
 });
 
@@ -2194,6 +2351,16 @@ class $$MetaTableFilterComposer extends Composer<_$LocalDb, $MetaTable> {
 
   ColumnFilters<String> get lastPull => $composableBuilder(
     column: $table.lastPull,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get tempNext => $composableBuilder(
+    column: $table.tempNext,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get numberingEpoch => $composableBuilder(
+    column: $table.numberingEpoch,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -2260,6 +2427,16 @@ class $$MetaTableOrderingComposer extends Composer<_$LocalDb, $MetaTable> {
     column: $table.lastPull,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get tempNext => $composableBuilder(
+    column: $table.tempNext,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get numberingEpoch => $composableBuilder(
+    column: $table.numberingEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MetaTableAnnotationComposer extends Composer<_$LocalDb, $MetaTable> {
@@ -2306,6 +2483,14 @@ class $$MetaTableAnnotationComposer extends Composer<_$LocalDb, $MetaTable> {
 
   GeneratedColumn<String> get lastPull =>
       $composableBuilder(column: $table.lastPull, builder: (column) => column);
+
+  GeneratedColumn<int> get tempNext =>
+      $composableBuilder(column: $table.tempNext, builder: (column) => column);
+
+  GeneratedColumn<int> get numberingEpoch => $composableBuilder(
+    column: $table.numberingEpoch,
+    builder: (column) => column,
+  );
 }
 
 class $$MetaTableTableManager
@@ -2347,6 +2532,8 @@ class $$MetaTableTableManager
                 Value<int?> blockNext = const Value.absent(),
                 Value<int?> blockEnd = const Value.absent(),
                 Value<String?> lastPull = const Value.absent(),
+                Value<int> tempNext = const Value.absent(),
+                Value<int?> numberingEpoch = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MetaCompanion(
                 id: id,
@@ -2360,6 +2547,8 @@ class $$MetaTableTableManager
                 blockNext: blockNext,
                 blockEnd: blockEnd,
                 lastPull: lastPull,
+                tempNext: tempNext,
+                numberingEpoch: numberingEpoch,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -2375,6 +2564,8 @@ class $$MetaTableTableManager
                 Value<int?> blockNext = const Value.absent(),
                 Value<int?> blockEnd = const Value.absent(),
                 Value<String?> lastPull = const Value.absent(),
+                Value<int> tempNext = const Value.absent(),
+                Value<int?> numberingEpoch = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MetaCompanion.insert(
                 id: id,
@@ -2388,6 +2579,8 @@ class $$MetaTableTableManager
                 blockNext: blockNext,
                 blockEnd: blockEnd,
                 lastPull: lastPull,
+                tempNext: tempNext,
+                numberingEpoch: numberingEpoch,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -2598,6 +2791,7 @@ typedef $$EntriesTableCreateCompanionBuilder = EntriesCompanion Function({
   required bool deleted,
   Value<String> syncState,
   Value<int> baseVersion,
+  Value<String> previousRefIds,
   Value<int> rowid,
 });
 typedef $$EntriesTableUpdateCompanionBuilder = EntriesCompanion Function({
@@ -2618,6 +2812,7 @@ typedef $$EntriesTableUpdateCompanionBuilder = EntriesCompanion Function({
   Value<bool> deleted,
   Value<String> syncState,
   Value<int> baseVersion,
+  Value<String> previousRefIds,
   Value<int> rowid,
 });
 
@@ -2711,6 +2906,11 @@ class $$EntriesTableFilterComposer extends Composer<_$LocalDb, $EntriesTable> {
 
   ColumnFilters<int> get baseVersion => $composableBuilder(
     column: $table.baseVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get previousRefIds => $composableBuilder(
+    column: $table.previousRefIds,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -2808,6 +3008,11 @@ class $$EntriesTableOrderingComposer
     column: $table.baseVersion,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get previousRefIds => $composableBuilder(
+    column: $table.previousRefIds,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$EntriesTableAnnotationComposer
@@ -2877,6 +3082,11 @@ class $$EntriesTableAnnotationComposer
     column: $table.baseVersion,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get previousRefIds => $composableBuilder(
+    column: $table.previousRefIds,
+    builder: (column) => column,
+  );
 }
 
 class $$EntriesTableTableManager
@@ -2924,6 +3134,7 @@ class $$EntriesTableTableManager
                 Value<bool> deleted = const Value.absent(),
                 Value<String> syncState = const Value.absent(),
                 Value<int> baseVersion = const Value.absent(),
+                Value<String> previousRefIds = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => EntriesCompanion(
                 id: id,
@@ -2943,6 +3154,7 @@ class $$EntriesTableTableManager
                 deleted: deleted,
                 syncState: syncState,
                 baseVersion: baseVersion,
+                previousRefIds: previousRefIds,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -2964,6 +3176,7 @@ class $$EntriesTableTableManager
                 required bool deleted,
                 Value<String> syncState = const Value.absent(),
                 Value<int> baseVersion = const Value.absent(),
+                Value<String> previousRefIds = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => EntriesCompanion.insert(
                 id: id,
@@ -2983,6 +3196,7 @@ class $$EntriesTableTableManager
                 deleted: deleted,
                 syncState: syncState,
                 baseVersion: baseVersion,
+                previousRefIds: previousRefIds,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

@@ -27,7 +27,7 @@ Els Ref IDs d'una base de dades han de ser correlatius (1, 2, 3…) i sense salt
 | Rastre | Camp nou **Previous Ref IDs** (llista, el més antic primer). Visible a la fitxa de l'entrada i com a columna a l'Excel. |
 | Compactar | Botó **Close Ref ID gaps** a l'estructura de la base de dades. Només l'Owner. En una base de dades al núvol, només amb connexió. |
 | Ordre en compactar | Es manté l'ordre actual dels números. Els grups compartits continuen compartint número. |
-| Entrades esborrades | No es renumeren. El seu número pot tornar a aparèixer en una entrada viva (no hi ha conflicte: l'índex únic només mira les vives). |
+| Entrades esborrades | No es renumeren. El seu número pot tornar a aparèixer en una entrada viva (no hi ha conflicte: l'índex únic només mira les vives). Si una entrada esborrada es recupera després d'una compactació, rep un número nou (§4). |
 | Mòbil | Cap canvi de flux: ja desa només amb connexió. Rep els números nous en sincronitzar. |
 | Bases de dades locals (sense núvol) | El botó també hi és i compacta en local. No tenen IDs provisionals: sempre tenen número. |
 
@@ -39,17 +39,28 @@ Els Ref IDs d'una base de dades han de ser correlatius (1, 2, 3…) i sense salt
 - El formulari mostra "will be saved as HOL-TEMP-4 (provisional)" quan no hi ha connexió.
 - A la taula i a la fitxa, un ID provisional es veu en cursiva amb una etiqueta "Provisional".
 
-**En sincronitzar** (dins de `_round`, abans del push):
-1. Per a cada número negatiu diferent entre les entrades pendents, es crida la RPC `claim_number(db, device, temp, ids)` amb els ids de les entrades del grup. Retorna el número real.
-2. En una sola transacció local, totes les entrades amb aquell número negatiu passen al número real, el `refId` es recalcula i s'afegeix `HOL-TEMP-n` a Previous Ref IDs.
-3. Després, el push de sempre (`push_entry`) puja les entrades ja amb número real.
+**En sincronitzar** (dins de `_round`, abans del push), per a cada grup TEMP pendent, del més antic al més nou:
+1. Si totes les entrades del grup estan esborrades i cap no s'ha pujat mai (`baseVersion = 0`), s'eliminen del fitxer local i no es reclama cap número (crear i esborrar sense connexió no deixa salts).
+2. Es crida la RPC `claim_number(db, device, temp, ids)` amb els ids de **totes** les entrades del grup (també les esborrades). Es reclama a **cada** ronda mentre el grup sigui provisional: tornar a demanar retorna el número actual del grup, també després d'una compactació.
+3. Cada entrada del grup es puja (`push_entry`) com a **còpia** amb el número real, `refId` recalculat i el TEMP afegit a Previous Ref IDs. Al fitxer local l'entrada continua sent provisional.
+4. Només quan el servidor ha acceptat **tot** el grup, una transacció local passa totes les entrades amb aquell número negatiu (també les esborrades) al número real i guarda `HOL-TEMP-n` a Previous Ref IDs. Si alguna entrada queda pendent (conflicte, refús), el grup continua provisional i es torna a provar a la ronda següent.
+5. Després es pugen les altres entrades pendents (números reals).
+- Si un push respon `stale` (els números han canviat mentrestant), el dispositiu pren la numeració del servidor (§4) i s'acaben els pujaments d'aquella ronda; la ronda següent ho torna a provar.
+- Mòbil: desa només amb connexió. Si el push respon `stale`, pren la numeració nova i ho torna a provar **una** vegada; si torna a ser `stale`, l'acció es refusa ("Please try again") i el canvi es desfà.
+
+**Identificador de dispositiu:** cada vegada que un fitxer s'enllaça al núvol (obrir una base de dades del núvol, crear-la, "Move to cloud") rep un `device_id` propi: `<id de la instal·lació>:<uuid nou>`. La migració local a v4 també en dona un de nou als fitxers enllaçats. Així dues còpies de la mateixa base de dades en un mateix PC (o un fitxer copiat i tornat a obrir) no comparteixen reclamacions.
 
 **Servidor**
-- Taula nova `temp_claims(database_id, device_id, temp_number, number)` amb clau primària `(database_id, device_id, temp_number)`.
-- `claim_number`: si la reclamació ja existeix, retorna el mateix número. Si algun dels `ids` ja és al servidor (un intent en línia que va arribar però la resposta es va perdre), retorna el número d'aquella fila i no en gasta cap de nou. Així, si la resposta es perd, no es gasta cap altre número. Si no existeix, pren `next_number` i l'incrementa en 1.
-- `push_entry` passa a tenir un paràmetre més, `epoch` (el `numbering_epoch` que coneix el dispositiu). Canviar la signatura és intencionat: les apps antigues, que la criden sense `epoch`, reben un error i no poden pujar números que podrien estar desfasats. L'error es mostra com a problema de sincronització ("Update the app to keep syncing"). Les seves entrades queden pendents al PC, no es perden.
-- Una fila nova és vàlida si el seu número és a `temp_claims`, o si ja existeix a `entries` (s'afegeix a un grup compartit) **i** `epoch` és l'actual. Si `epoch` és antic, retorna `stale`: el dispositiu actualitza els números (§4) i torna a provar.
-- `push_entry` accepta `previous_ref_ids` en inserir una fila. En actualitzar-la no el toca, perquè només el servidor (compactar) o el claim el modifiquen.
+- Taula nova `temp_claims(database_id, device_id, temp_number, number, ids)` amb clau primària `(database_id, device_id, temp_number)`. `ids` són els ids de les entrades del grup.
+- `claim_number(db, device, temp, ids)`:
+  - Si la reclamació ja existeix, retorna el mateix número. Però si la reclamació guardada i la nova tenen `ids` i no en comparteixen cap, és una altra còpia del fitxer amb el mateix TEMP (un altre espècimen): error `Claim key reused by a different copy`, mai el número de l'altra.
+  - Si algun dels `ids` ja és al servidor **i és viu** (un intent en línia que va arribar però la resposta es va perdre), retorna el número d'aquella fila i no en gasta cap de nou. El número d'una fila esborrada no es reutilitza, perquè després d'una compactació pot ser d'un altre espècimen.
+  - Si no, pren `next_number` i l'incrementa en 1.
+  - El TEMP que l'usuari va veure el calcula el servidor a partir del prefix (`HOL` → `HOL-TEMP-3`, `MAS-` → `MAS-TEMP-3`, sense prefix → `TEMP-3`) i l'afegeix a `previous_ref_ids` de les files del grup que ja hi són (actualitza `updated_at`, no `version`).
+- `push_entry` passa a tenir un paràmetre més, `epoch` (el `numbering_epoch` que coneix el dispositiu). Canviar la signatura és intencionat: les apps antigues, que la criden sense `epoch`, reben un error del servidor i no poden pujar números que podrien estar desfasats (§7).
+- Una fila nova és vàlida si el seu número és a `temp_claims`, o si s'afegeix a un Ref ID que té alguna fila **viva** (un número que només tenen files esborrades no és un Ref ID al qual afegir dents), **i** `epoch` és l'actual. Si `epoch` és antic, retorna `stale`.
+- En inserir una fila, el servidor calcula el `ref_id` a partir del número (no es fia del dispositiu) i accepta `previous_ref_ids` del dispositiu (porta el TEMP), si és una llista. En actualitzar-la no toca número, `ref_id` ni `previous_ref_ids`, excepte en recuperar una fila esborrada (§4).
+- `create_database` ("Move to cloud") també puja `previous_ref_ids`.
 - `reserve_block` i `id_blocks` deixen de fer-se servir. La migració 004 esborra `reserve_block`; la taula `id_blocks` es buida i s'esborra.
 
 ## 4. Compactar (botó "Close Ref ID gaps")
@@ -60,15 +71,25 @@ Els Ref IDs d'una base de dades han de ser correlatius (1, 2, 3…) i sense salt
 1. Bloqueja la fila de `databases` (`for update`). Mentrestant, qualsevol `create_entries`/`claim_number` espera.
 2. Calcula el número nou de cada número viu diferent, en ordre: 1, 2, 3…
 3. Aplica els canvis en dues fases (primer a negatiu, després al definitiu) per no xocar amb l'índex únic. A cada fila que canvia, l'ID antic s'afegeix a `previous_ref_ids` i s'actualitza `updated_at`. **No** s'incrementa `version`, perquè renumerar no ha de crear conflictes amb edicions pendents.
-4. `next_number` = màxim viu + 1. `temp_claims.number` es renumera amb el mateix mapa, perquè un claim repetit retorni el número **actual** del grup. Un claim que encara no té cap fila pujada també compta com a número viu, perquè no es perdi.
-5. Incrementa `databases.numbering_epoch`.
-6. Retorna la llista de canvis.
+4. Números vius = els de les files vives + els dels claims **pendents**. Un claim és pendent mentre cap de les seves entrades no és al servidor amb el número del claim (sense `ids`: mentre cap fila no té el seu número). Així un grup reclamat però encara no pujat no perd el seu número, encara que una fila esborrada tingui aquell número.
+5. Els claims que no són pendents ni tenen un número viu (les seves files pujades s'han esborrat) s'**esborren**: si la resta del grup torna a reclamar, rep un número nou i no el que la compactació pot haver donat a un altre espècimen. Tots els altres claims es renumeren amb el mateix mapa, perquè un claim repetit retorni el número **actual** del grup.
+6. `next_number` = nombre de números vius + 1. Incrementa `databases.numbering_epoch` si hi ha canvis, i també si `next_number` baixa sense canvis (els números per sobre dels vius es tornaran a donar: una fila esborrada amb un d'aquests números ha de rebre'n un de nou si es recupera).
+7. Retorna la llista de canvis.
 
-**Altres dispositius:** quan detecten que `numbering_epoch` ha canviat, descarreguen `(id, number, ref_id, previous_ref_ids)` de totes les files i les reescriuen en una sola transacció local en dues fases. Ho fan també en les files amb edicions pendents, perquè el número és del servidor i les edicions (valors) es conserven.
+**Entrades esborrades i recuperades:** `entries.deleted_epoch` guarda el `numbering_epoch` en què es va esborrar la fila (null mentre és viva). Si un `push_entry` recupera una fila esborrada (p. ex. "keep mine" en un conflicte amb una fila esborrada en un altre lloc) i `deleted_epoch` no és l'epoch actual, és que hi ha hagut una compactació des de l'esborrat i el seu número pot ser d'un altre espècimen: rep un número nou de `next_number`, l'ID antic va a Previous Ref IDs i `updated_at` s'actualitza. Els dispositius ho reben en sincronitzar (el número de la fila canvia). Les files esborrades abans de la migració 004 compten com esborrades a l'epoch 0.
+
+**Altres dispositius:** quan detecten que `numbering_epoch` ha canviat (o una fila descarregada té un número diferent del local, o la ronda anterior va deixar files enrere), prenen la numeració del servidor en una sola transacció local:
+1. Primer, els esborrats fets en altres llocs: una fila esborrada al servidor i sense canvis aquí es marca esborrada (el seu número pot passar a una altra fila). Si té una edició pendent, es converteix en conflicte.
+2. Les files que el servidor coneix reben el seu número, `ref_id` i `previous_ref_ids`, també les que tenen edicions pendents (les edicions es conserven). Les files provisionals (número negatiu) no es toquen mai: només el seu claim els dona número.
+3. Les files que encara no s'han pujat mai segueixen el número nou del seu grup. Si el grup ja no té cap fila viva al servidor, o les files que compartien el seu número ara són en llocs diferents (no se sap quin és el seu espècimen), passen a ser provisionals (un TEMP nou, amb l'ID anterior a Previous Ref IDs) i reclamen un número propi. Mai es deixen en un número que pot ser d'un altre espècimen.
+4. Una fila coneguda pel servidor que xocaria (mateix número i mateixa dent) amb una altra fila viva local es queda on és; es torna a provar a la ronda següent (el conflicte pendent es resol primer).
+La reescriptura és en dues fases per no xocar amb l'índex únic, i no canvia `version` ni l'estat de sincronització.
 
 **Local (sense núvol):** el mateix algorisme en una transacció de drift. `meta.nextNumber` = màxim + 1.
 
-**Seguretat:** abans de compactar es fa un backup local automàtic (el servei de backup existent).
+**Seguretat:** abans de compactar es fa un backup local automàtic (el servei de backup existent). Si el backup falla, no es renumera res i es diu ("Couldn't make a backup, so nothing was renumbered"). Després de compactar, un missatge diu quants Ref IDs han canviat ("Renumbered N Ref IDs.").
+
+**Desenllaçar i restaurar:** una còpia restaurada d'un backup d'una base de dades del núvol queda local (sense enllaç, sense pendents ni conflictes). Els grups TEMP que tenia reben números reals locals a partir del més gran que hi hagi + 1 (ningú més els numerarà), i l'ID TEMP queda a Previous Ref IDs.
 
 ## 5. Canvis d'esquema
 
@@ -83,6 +104,9 @@ Els Ref IDs d'una base de dades han de ser correlatius (1, 2, 3…) i sense salt
 - `entries.previousRefIds` (text JSON, default `'[]'`)
 - `meta.tempNext` (int, default 1), `meta.numberingEpoch` (int, nullable)
 - En migrar: s'esborra el bloc reservat (`blockNext/blockEnd` = null). Les entrades pendents que encara no s'havien pujat mai (`baseVersion = 0`) i tenien un número del bloc passen a ser provisionals: número negatiu, `HOL-TEMP-n`, i l'ID del bloc va a Previous Ref IDs (encara que no s'hagi pujat mai, pot estar escrit en una etiqueta). Les entrades d'un mateix grup reben el mateix TEMP.
+- Un número es converteix només si **cap** fila amb aquell número està sincronitzada o s'ha pujat abans (`baseVersion > 0`). Si n'hi ha alguna, el número és un Ref ID del servidor i les dents afegides sense connexió ("Add teeth to HOL0042") s'hi queden.
+- Els fitxers enllaçats al núvol reben un `device_id` nou (§3), dins de la mateixa transacció.
+- Servidor: `entries.deleted_epoch int` (null mentre la fila és viva); les files ja esborrades reben 0.
 
 ## 6. Excel i fitxa
 
@@ -92,10 +116,13 @@ Els Ref IDs d'una base de dades han de ser correlatius (1, 2, 3…) i sense salt
 ## 7. Errors i casos límit
 
 - **Compactar mentre un altre PC és offline amb TEMPs:** cap problema. Els seus TEMPs reclamaran números després de `next_number`.
-- **Un PC amb l'app antiga i entrades offline d'un bloc sense pujar:** no pot pujar-les (signatura nova de `push_entry`). En actualitzar l'app, la migració local les converteix en TEMP (§5) i reben un número nou sense xocar amb ningú.
-- **Ordre recomanat per al primer ús:** actualitzar l'app a tots els PCs i mòbils, deixar que sincronitzin, i després prémer Close Ref ID gaps.
+- **Apps antigues:** després d'executar la migració 004, una app sense actualitzar no pot pujar res (signatura nova de `push_entry`, `reserve_block` ja no existeix). Mostra un error del servidor, no un missatge amable; els seus canvis queden pendents en aquell dispositiu i no es perden. En actualitzar l'app, la migració local converteix les entrades offline del bloc en TEMP (§5) i reben un número nou sense xocar amb ningú.
+- **Una app antiga després d'una compactació:** no s'ha de fer servir. Continua descarregant canvis, però no sap renumerar: mostra Ref IDs antics i, quan una fila renumerada xoca amb una de local, pot marcar com a esborrades files que són vives (només en aquell dispositiu). S'ha d'actualitzar abans de tornar-la a fer servir.
+- **Ordre recomanat:** executar 004 i actualitzar l'app a tots els PCs i mòbils alhora, deixar que sincronitzin, i després prémer Close Ref ID gaps.
+- **Una còpia del fitxer obert en un altre PC o carpeta:** si encara té el `device_id` de l'original i fa servir el mateix TEMP per a un altre espècimen, `claim_number` ho refusa (§3); aquell grup no es puja fins que es resol a mà.
 - **Afegir dents a un grup mentre un altre PC compacta:** el push arriba amb `epoch` antic → `stale` → el dispositiu actualitza els números i torna a provar amb el número nou del grup.
 - **Resposta del claim perduda:** el següent intent retorna el mateix número (clau a `temp_claims`).
+- **Un grup TEMP pujat a mitges i la part pujada esborrada en un altre lloc:** la compactació esborra aquell claim (§4) i la resta del grup rep un número nou.
 - **Viewer:** no pot compactar ni reclamar números (com ara).
 - **Dues compactacions alhora:** el bloqueig de la fila les serialitza; la segona no troba salts.
 

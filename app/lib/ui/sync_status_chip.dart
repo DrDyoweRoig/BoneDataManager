@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import '../cloud/sync_engine.dart';
 
 /// Toast text for connection changes (spec §10).
-String syncEventMessage(SyncEvent e) => switch (e) {
+String syncEventMessage(SyncEvent e, String prefix) => switch (e) {
   WentOffline() =>
-    "You're offline. New entries will use this device's reserved IDs, so numbering may have gaps. "
+    "You're offline. New entries get provisional IDs (${prefix}TEMP-…) until this computer syncs. "
         "Changes will sync automatically when you're back online.",
   BackOnline(:final synced) => 'Back online — $synced entries synced.',
 };

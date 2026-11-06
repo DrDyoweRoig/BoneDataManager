@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../backup/backup_service.dart';
 import '../cloud/cloud_api.dart';
 import '../data/local_store.dart';
+import '../entries/entry.dart';
 import '../ids/ref_id.dart';
 import '../schema/database_def.dart';
 import '../schema/layer.dart';
@@ -11,7 +13,13 @@ import 'wizard/layer_editor.dart';
 
 /// Edit name, Ref ID format, bones and layers of an existing database.
 class StructureScreen extends StatefulWidget {
-  const StructureScreen({super.key, required this.store, this.onSaved, this.api, this.onMoveToCloud});
+  const StructureScreen({super.key,
+      required this.store,
+      this.onSaved,
+      this.api,
+      this.onMoveToCloud,
+      this.onCloseGaps,
+      this.onSyncFirst});
 
   final LocalStore store;
 
@@ -21,6 +29,13 @@ class StructureScreen extends StatefulWidget {
   /// Set for a local database when the user is signed in: uploads it and links it.
   final Future<void> Function()? onMoveToCloud;
   final VoidCallback? onSaved;
+
+  /// Closes the gaps in the Ref IDs (backup, renumber, refresh) and returns the rows that changed; null
+  /// hides the button. A failed backup throws [BackupFailed].
+  final Future<List<NumberChange>> Function()? onCloseGaps;
+
+  /// Cloud databases: pushes this device's waiting rows so the preview sees their final numbers.
+  final Future<void> Function()? onSyncFirst;
 
   @override
   State<StructureScreen> createState() => _StructureScreenState();
@@ -92,6 +107,69 @@ class _StructureScreenState extends State<StructureScreen> {
       if (mounted) setState(() => _error = 'Moving to the cloud needs an internet connection.');
     } on CloudDenied catch (e) {
       if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _closeGaps() async {
+    final messenger = ScaffoldMessenger.of(context);
+    void say(String text) => messenger.showSnackBar(SnackBar(content: Text(text)));
+    try {
+      if (widget.store.cloudId != null && (await widget.store.pendingEntries()).isNotEmpty) {
+        await widget.onSyncFirst?.call();
+        if ((await widget.store.pendingEntries()).isNotEmpty) throw const CloudOffline();
+      }
+      final entries = await widget.store.allEntries();
+      final map = compactionMap(entries.map((e) => e.number));
+      if (map.isEmpty) {
+        say('No gaps — nothing to change.');
+        return;
+      }
+      final def = widget.store.def;
+      final lines = <String>[];
+      for (final n in map.keys.toList()..sort()) {
+        final old = entries.firstWhere((e) => e.number == n).refId;
+        lines.add('$old → ${formatRefId(def.prefix, def.digits, map[n]!)}');
+      }
+      if (!mounted) return;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Close Ref ID gaps?'),
+          content: SizedBox(
+            width: 360,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${entries.where((e) => map.containsKey(e.number)).length} entries will get a new Ref ID. '
+                  'Their old IDs are kept in Previous Ref IDs.'),
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [for (final l in lines) Text(l, style: const TextStyle(fontFamily: 'monospace'))]),
+                ),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Renumber')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+      final changes = await widget.onCloseGaps!();
+      // Rows sharing a Ref ID change together: count Ref IDs, not rows.
+      final n = {for (final c in changes) c.refId}.length;
+      say(n == 0 ? 'No gaps — nothing to change.' : 'Renumbered $n Ref ID${n == 1 ? '' : 's'}.');
+    } on CloudOffline {
+      say('Closing gaps needs an internet connection.');
+    } on CloudDenied catch (e) {
+      say(e.message);
+    } on BackupFailed catch (e) {
+      // The backup comes first, so nothing was renumbered.
+      say("Couldn't make a backup, so nothing was renumbered: $e");
+    } catch (e) {
+      say("Couldn't close gaps: $e");
     }
   }
 
@@ -172,8 +250,7 @@ class _StructureScreenState extends State<StructureScreen> {
               ]),
               const SizedBox(height: 8),
               Text(
-                  'Next entry: ${formatRefId(_prefix.text, _digits, widget.store.nextNumber)}. '
-                  'Existing Ref IDs never change.',
+                  'Next entry: ${formatRefId(_prefix.text, _digits, widget.store.nextNumber)}.',
                   style: theme.textTheme.bodySmall),
               if (widget.onMoveToCloud != null && widget.store.cloudId == null) ...[
                 title('Cloud'),
@@ -183,6 +260,17 @@ class _StructureScreenState extends State<StructureScreen> {
                     title: const Text('Share this database'),
                     subtitle: const Text('Upload it so other people and computers can work on it.'),
                     trailing: OutlinedButton(onPressed: _moveToCloud, child: const Text('Move to cloud')),
+                  ),
+                ),
+              ],
+              if (widget.onCloseGaps != null) ...[
+                title('Ref IDs'),
+                Card.outlined(
+                  child: ListTile(
+                    title: const Text('Close Ref ID gaps'),
+                    subtitle: const Text('Renumber entries so Ref IDs run without gaps.'),
+                    trailing: OutlinedButton(
+                        key: const Key('close-gaps'), onPressed: _closeGaps, child: const Text('Close Ref ID gaps')),
                   ),
                 ),
               ],

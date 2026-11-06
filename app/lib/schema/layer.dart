@@ -14,7 +14,7 @@ enum LayerType {
 
 /// Fixed Excel columns; layer names may not reuse them.
 const kFixedColumns = [
-  'Ref ID', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
+  'Ref ID', 'Previous Ref IDs', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side',
   'Created by', 'Created at', 'Modified by', 'Modified at',
 ];
 

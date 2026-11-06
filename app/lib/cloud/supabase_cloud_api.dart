@@ -129,22 +129,70 @@ class SupabaseCloudApi implements CloudApi {
         return [for (final r in rows) entryFromJson(_map(r))]..sort((a, b) => a.number.compareTo(b.number));
       });
 
+  NumberChange _numberChange(Map<String, Object?> r) => (
+        id: r['id'] as String,
+        number: (r['number'] as num).toInt(),
+        refId: r['ref_id'] as String,
+        previousRefIds: ((r['previous_ref_ids'] as List?) ?? const []).cast<String>().toList(),
+      );
+
   @override
-  Future<({int start, int end})> reserveBlock(String db, String device, int size) => _call(() async {
-        final rows = await client.rpc('reserve_block', params: {'db': db, 'device': device, 'size': size}) as List;
-        final r = _map(rows.single);
-        return (start: (r['block_start'] as num).toInt(), end: (r['block_end'] as num).toInt());
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids) => _call(() async =>
+      (await client.rpc('claim_number', params: {'db': db, 'device': device, 'temp': provisional, 'ids': ids})
+              as num)
+          .toInt());
+
+  @override
+  Future<int> numberingEpoch(String db) => _call(() async {
+        final r = await client.from('databases').select('numbering_epoch').eq('id', db).single();
+        return (r['numbering_epoch'] as num).toInt();
       });
 
   @override
-  Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion}) => _call(() async {
+  Future<List<ServerNumber>> currentNumbers(String db) => _call(() async {
+        final out = <ServerNumber>[];
+        for (var from = 0;; from += _page) {
+          final rows = await client
+              .from('entries')
+              .select('id, number, ref_id, previous_ref_ids, deleted')
+              .eq('database_id', db)
+              .order('id')
+              .range(from, from + _page - 1);
+          for (final r in rows) {
+            final c = _numberChange(r);
+            out.add((
+              id: c.id,
+              number: c.number,
+              refId: c.refId,
+              previousRefIds: c.previousRefIds,
+              deleted: r['deleted'] as bool? ?? false,
+            ));
+          }
+          if (rows.length < _page) return out;
+        }
+      });
+
+  @override
+  Future<({int epoch, List<NumberChange> changes})> compactRefIds(String db) => _call(() async {
+        final r = _map(await client.rpc('compact_ref_ids', params: {'db': db}));
+        return (
+          epoch: (r['epoch'] as num).toInt(),
+          changes: [for (final c in (r['changes'] as List)) _numberChange(_map(c))],
+        );
+      }, timeout: const Duration(seconds: 90));
+
+  @override
+  Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion, required int epoch}) =>
+      _call(() async {
         final r = _map(await client.rpc('push_entry', params: {
           'db': db,
           'e': entryToJson(e),
           'base_version': baseVersion,
+          'epoch': epoch,
         }));
         return switch (r['status']) {
           'ok' => PushOk((r['version'] as num).toInt()),
+          'stale' => PushStale(),
           'duplicate' => PushDuplicate(entryFromJson(_map(r['row']))),
           _ => PushConflict(entryFromJson(_map(r['row']))),
         };

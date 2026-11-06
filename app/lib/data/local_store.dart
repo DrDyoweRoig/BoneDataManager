@@ -17,12 +17,6 @@ import 'local_db.dart';
 
 const _uuid = Uuid();
 
-/// Offline: this computer's reserved numbers can't cover the new entries.
-class NoNumbersLeft implements Exception {
-  @override
-  String toString() => 'No reserved numbers left on this computer. Connect to the internet to add more entries.';
-}
-
 /// Adding a tooth to a shared Ref ID that already has it.
 class ToothAlreadyInGroup implements Exception {
   ToothAlreadyInGroup(this.tooth, this.refId);
@@ -42,7 +36,7 @@ String _elementKey(EntryDraft d) =>
     [d.elementId, d.dentition?.name, d.toothType, d.jaw?.name, d.side?.name].map((v) => v ?? '').join('|');
 
 /// One database = one SQLite file holding its definition, layers and entries.
-/// A cloud-linked store also tracks pending (not yet uploaded) changes, its reserved number block
+/// A cloud-linked store also tracks pending (not yet uploaded) changes
 /// and conflicts with the server.
 class LocalStore implements EntryWriter {
   LocalStore._(this._db, this._def, this._nextNumber, this.file, this._now);
@@ -54,13 +48,17 @@ class LocalStore implements EntryWriter {
   final DateTime Function() _now;
   String? _cloudId;
   String? _deviceId;
-  ({int next, int end})? _block;
+  int _tempNext = 1;
+  int? _epoch;
 
   String? get cloudId => _cloudId;
   String? get deviceId => _deviceId;
 
-  /// Reserved numbers still free on this computer (`next` > `end` means used up).
-  ({int next, int end})? get block => _block;
+  /// The TEMP number the next offline create will show (HOL-TEMP-n).
+  int get nextProvisional => _tempNext;
+
+  /// Which numbering generation this copy follows (null until the server says).
+  int? get numberingEpoch => _epoch;
 
   DatabaseDef get def => _def;
 
@@ -108,7 +106,8 @@ class LocalStore implements EntryWriter {
     return LocalStore._(db, def, meta.nextNumber, file, now ?? DateTime.now)
       .._cloudId = meta.cloudId
       .._deviceId = meta.deviceId
-      .._block = meta.blockNext == null ? null : (next: meta.blockNext!, end: meta.blockEnd!);
+      .._tempNext = meta.tempNext
+      .._epoch = meta.numberingEpoch;
   }
 
   Future<void> _writeLayers(List<Layer> layers) async {
@@ -192,10 +191,15 @@ class LocalStore implements EntryWriter {
 
   // ───────────── Cloud sync support ─────────────
 
-  Future<void> linkToCloud(String cloudId, String deviceId) async {
-    await _db.update(_db.meta).write(MetaCompanion(cloudId: Value(cloudId), deviceId: Value(deviceId)));
+  /// Links this file to cloud database [cloudId]. Its device id is [installId] plus a fresh part, so two
+  /// copies made on one computer never share provisional-number claims.
+  Future<void> linkToCloud(String cloudId, String installId) async {
+    final deviceId = newLinkDeviceId(installId);
+    await _db.update(_db.meta).write(
+        MetaCompanion(cloudId: Value(cloudId), deviceId: Value(deviceId), numberingEpoch: const Value(null)));
     _cloudId = cloudId;
     _deviceId = deviceId;
+    _epoch = null;
   }
 
   /// Every row, deleted ones too (for uploads that must keep their numbers taken).
@@ -208,35 +212,199 @@ class LocalStore implements EntryWriter {
   Future<void> markAllSynced() =>
       _db.customUpdate("UPDATE entries SET sync_state = 'synced', base_version = version", updates: {_db.entries});
 
-  Future<void> setBlock(int start, int end) async {
-    await _db.update(_db.meta).write(MetaCompanion(blockNext: Value(start), blockEnd: Value(end)));
-    _block = (next: start, end: end);
-  }
-
-  /// Offline creation: numbers come from this computer's block. All or nothing.
+  /// Offline creation: numbers are provisional (-1, -2, ...), shown as HOL-TEMP-n, and never reused.
   /// [ids] reuse the ids of an online attempt whose answer was lost, so the server can match them.
-  Future<List<Entry>> createEntriesFromBlock(List<EntryDraft> drafts, String observer,
+  Future<List<Entry>> createProvisional(List<EntryDraft> drafts, String observer,
       {List<String>? ids, bool sharedId = false}) async {
-    final b = _block;
-    final needed = sharedId ? 1 : drafts.length;
-    if (b == null || b.next + needed - 1 > b.end) throw NoNumbersLeft();
     final now = _now();
     final created = <Entry>[];
     await _db.transaction(() async {
-      var n = b.next;
+      var t = (await _db.select(_db.meta).getSingle()).tempNext;
       for (var i = 0; i < drafts.length; i++) {
-        final d = drafts[i];
-        var row = _rowFor(d, n, observer, now).copyWith(syncState: 'pending');
+        var row = _rowFor(drafts[i], -t, observer, now)
+            .copyWith(refId: provisionalRefId(_def.prefix, t), syncState: 'pending');
         if (ids != null) row = row.copyWith(id: ids[i]);
         await _db.into(_db.entries).insert(row);
         created.add(_toEntry(row));
-        if (!sharedId) n++;
+        if (!sharedId) t++;
       }
-      if (sharedId && drafts.isNotEmpty) n++;
-      await _db.update(_db.meta).write(MetaCompanion(blockNext: Value(n)));
-      _block = (next: n, end: b.end);
+      if (sharedId && drafts.isNotEmpty) t++;
+      await _db.update(_db.meta).write(MetaCompanion(tempNext: Value(t)));
+      _tempNext = t;
     });
     return created;
+  }
+
+  /// Gives every row (deleted too) of provisional group [provisional] its real [number].
+  /// The TEMP Ref ID is kept in previousRefIds. Sync state and version stay as they were.
+  Future<List<NumberChange>> assignNumber(int provisional, int number) => _db.transaction(() async {
+        final rows =
+            await (_db.select(_db.entries)..where((e) => e.number.equals(provisional))).get();
+        final changes = <NumberChange>[];
+        for (final r in rows) {
+          changes.add(_renumbered(r, number));
+        }
+        await applyNumbering(changes);
+        return changes;
+      });
+
+  /// Applies new numbers in one transaction. Two phases (unique temporaries first) so swaps never
+  /// trip the one-element-per-ID index. Does not touch syncState or version.
+  Future<void> applyNumbering(List<NumberChange> changes, {int? epoch}) => _db.transaction(() async {
+        for (var i = 0; i < changes.length; i++) {
+          await (_db.update(_db.entries)..where((e) => e.id.equals(changes[i].id)))
+              .write(EntriesCompanion(number: Value(-1000000 - i)));
+        }
+        for (final c in changes) {
+          await (_db.update(_db.entries)..where((e) => e.id.equals(c.id))).write(EntriesCompanion(
+              number: Value(c.number), refId: Value(c.refId), previousRefIds: Value(jsonEncode(c.previousRefIds))));
+        }
+        if (epoch != null) {
+          await _db.update(_db.meta).write(MetaCompanion(numberingEpoch: Value(epoch)));
+          _epoch = epoch;
+        }
+      });
+
+  /// Takes the server's numbering [server] (generation [epoch]) in one transaction, so nothing added
+  /// meanwhile is left behind:
+  /// - rows deleted on the server and unchanged here are marked deleted (their numbers may be reused);
+  /// - rows the server knows get its number and Ref IDs, except provisional ones (negative numbers):
+  ///   only their claim gives them a real number;
+  /// - rows not uploaded yet follow their group's new number; if their group has no live row on the
+  ///   server any more, or its rows are now in more than one place, they become provisional again (a new
+  ///   TEMP) and claim a number of their own.
+  /// A row the server knows whose new place is held here by another live row with the same element
+  /// stays where it is (the pull settles it, as a conflict if that row has a pending edit); those ids are
+  /// returned. A row not uploaded yet is never left on a stale number: it becomes provisional instead.
+  /// Sync state and versions are not touched.
+  Future<List<String>> applyServerNumbering(List<ServerNumber> server, int epoch) => _db.transaction(() async {
+        final rows = {for (final r in await _db.select(_db.entries).get()) r.id: r};
+        for (final s in server) {
+          final r = rows[s.id];
+          if (s.deleted && r != null && !r.deleted && r.syncState == 'synced') {
+            await (_db.update(_db.entries)..where((e) => e.id.equals(r.id)))
+                .write(const EntriesCompanion(deleted: Value(true)));
+            rows[r.id] = r.copyWith(deleted: true);
+          }
+        }
+
+        final changes = <String, NumberChange>{};
+        // Old number here → the numbers its live server rows have now (itself if they did not move).
+        final targets = <int, Set<int>>{};
+        for (final s in server) {
+          final r = rows[s.id];
+          if (r == null || r.number < 0) continue;
+          if (!s.deleted) (targets[r.number] ??= {}).add(s.number);
+          if (r.number != s.number || r.refId != s.refId || !_sameList(_previous(r), s.previousRefIds)) {
+            changes[s.id] = (id: s.id, number: s.number, refId: s.refId, previousRefIds: s.previousRefIds);
+          }
+        }
+
+        final known = {for (final s in server) s.id};
+        bool localOnly(EntryRow r) => !known.contains(r.id) && r.number > 0 && r.baseVersion == 0;
+        var t = (await _db.select(_db.meta).getSingle()).tempNext;
+        final firstTemp = t;
+        final temps = <int, int>{}; // detached group: old number → its new TEMP
+        // The rows not uploaded yet under old number [old] become one provisional group again.
+        void detach(int old) {
+          final temp = temps[old] ??= t++;
+          for (final r in rows.values) {
+            if (localOnly(r) && r.number == old) {
+              changes[r.id] = (
+                id: r.id,
+                number: -temp,
+                refId: provisionalRefId(_def.prefix, temp),
+                previousRefIds: [..._previous(r), r.refId],
+              );
+            }
+          }
+        }
+
+        for (final r in rows.values) {
+          if (!localOnly(r)) continue;
+          final to = targets[r.number];
+          if (to == null || to.length > 1) {
+            // Its group is gone from the server, or rows that shared its number here are now in different
+            // places (one was left behind earlier): which one is its specimen is unknown.
+            detach(r.number);
+          } else if (to.single != r.number) {
+            changes[r.id] = _renumbered(r, to.single);
+          }
+        }
+
+        // Live rows must stay one element per number. A row not uploaded yet that cannot follow its group
+        // is detached (never left on a number that may now belong to another specimen); a row the server
+        // knows stays where it is.
+        final skipped = <String>{};
+        while (true) {
+          final at = <String, List<String>>{};
+          for (final r in rows.values) {
+            if (r.deleted) continue;
+            final c = skipped.contains(r.id) ? null : changes[r.id];
+            (at['${c?.number ?? r.number}|${_elementKey(_toEntry(r).data)}'] ??= []).add(r.id);
+          }
+          final clash = [
+            for (final ids in at.values)
+              if (ids.length > 1)
+                for (final id in ids)
+                  if (changes.containsKey(id) && !skipped.contains(id)) id
+          ];
+          if (clash.isEmpty) break;
+          final stray = {for (final id in clash) if (localOnly(rows[id]!) && changes[id]!.number > 0) rows[id]!.number};
+          if (stray.isNotEmpty) {
+            stray.forEach(detach);
+            continue;
+          }
+          skipped.addAll(clash);
+        }
+
+        await applyNumbering([for (final c in changes.values) if (!skipped.contains(c.id)) c], epoch: epoch);
+        if (t != firstTemp) {
+          await _db.update(_db.meta).write(MetaCompanion(tempNext: Value(t)));
+          _tempNext = t;
+        }
+        return skipped.toList();
+      });
+
+  static List<String> _previous(EntryRow r) => (jsonDecode(r.previousRefIds) as List).cast<String>();
+
+  static bool _sameList(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// [r] under [number]: new Ref ID, its old one appended to previousRefIds.
+  NumberChange _renumbered(EntryRow r, int number) => (
+        id: r.id,
+        number: number,
+        refId: formatRefId(_def.prefix, _def.digits, number),
+        previousRefIds: [...(jsonDecode(r.previousRefIds) as List).cast<String>(), r.refId],
+      );
+
+  /// Closes gaps in a local-only database (cloud copies are numbered by the server).
+  Future<List<NumberChange>> compactLocal() async {
+    if (_cloudId != null) throw StateError('A cloud copy is compacted by the server');
+    return _db.transaction(() async {
+      final live = await (_db.select(_db.entries)
+            ..where((e) => e.deleted.equals(false))
+            ..orderBy([(e) => OrderingTerm(expression: e.rowId)]))
+          .get();
+      final map = compactionMap(live.map((e) => e.number));
+      final changes = <NumberChange>[
+        for (final r in live)
+          if (map.containsKey(r.number))
+            _renumbered(r, map[r.number]!)
+      ];
+      await applyNumbering(changes);
+      final maxLive = live.fold<int>(0, (m, e) => e.number > m ? e.number : m);
+      final next = live.isEmpty ? 1 : (map[maxLive] ?? maxLive) + 1;
+      await _db.update(_db.meta).write(MetaCompanion(nextNumber: Value(next)));
+      _nextNumber = next;
+      return changes;
+    });
   }
 
   /// Live rows sharing Ref ID number [number], in the order they were added.
@@ -333,7 +501,9 @@ class LocalStore implements EntryWriter {
           for (final other in await _clashes(server.number, server.data, exceptId: server.id)) {
             final row = await (_db.select(_db.entries)..where((e) => e.id.equals(other.id))).getSingle();
             if (row.syncState == 'pending') {
-              await addConflict(server, mineId: other.id);
+              // A conflict this row already has (e.g. deleted on the server) is asked first.
+              final asked = await (_db.select(_db.conflicts)..where((c) => c.entryId.equals(other.id))).getSingleOrNull();
+              if (asked == null) await addConflict(server, mineId: other.id);
               return true;
             }
             await (_db.update(_db.entries)..where((e) => e.id.equals(other.id)))
@@ -346,18 +516,37 @@ class LocalStore implements EntryWriter {
 
   /// Restored copies stand alone: no cloud link, no number block, nothing pending or in conflict.
   Future<void> unlinkFromCloud() => _db.transaction(() async {
-        await _db.update(_db.meta).write(const MetaCompanion(
-            cloudId: Value(null),
-            deviceId: Value(null),
-            blockNext: Value(null),
-            blockEnd: Value(null),
-            lastPull: Value(null)));
+        // Pending TEMP groups become real numbers now: nobody else will ever number them.
+        var next = (await _db.select(_db.meta).getSingle()).nextNumber;
+        // Server-numbered rows (pulled) never advanced the local counter.
+        final top = await _db.customSelect('SELECT MAX(number) AS m FROM entries').getSingle();
+        final maxNumber = top.data['m'] as int?;
+        if (maxNumber != null && maxNumber >= next) next = maxNumber + 1;
+        final temps = await (_db.select(_db.entries)..where((e) => e.number.isSmallerThanValue(0))).get();
+        final groups = {for (final t in temps) t.number}.toList()..sort((a, b) => b.compareTo(a));
+        final changes = <NumberChange>[];
+        for (final g in groups) {
+          for (final t in temps.where((t) => t.number == g)) {
+            changes.add(_renumbered(t, next));
+          }
+          next++;
+        }
+        await applyNumbering(changes);
+        await _db.update(_db.meta).write(MetaCompanion(
+            cloudId: const Value(null),
+            deviceId: const Value(null),
+            blockNext: const Value(null),
+            blockEnd: const Value(null),
+            lastPull: const Value(null),
+            numberingEpoch: const Value(null),
+            nextNumber: Value(next)));
+        _nextNumber = next;
+        _epoch = null;
         await _db.customUpdate("UPDATE entries SET sync_state = 'synced', base_version = version",
             updates: {_db.entries});
         await _db.delete(_db.conflicts).go();
         _cloudId = null;
         _deviceId = null;
-        _block = null;
       });
 
   Future<DateTime?> lastPull() async {
@@ -405,6 +594,7 @@ class LocalStore implements EntryWriter {
         deleted: false,
         syncState: 'synced',
         baseVersion: 0,
+        previousRefIds: '[]',
       );
 
   EntryRow _rowFromEntry(Entry e, String state) => EntryRow(
@@ -425,6 +615,7 @@ class LocalStore implements EntryWriter {
         deleted: e.deleted,
         syncState: state,
         baseVersion: e.version,
+        previousRefIds: jsonEncode(e.previousRefIds),
       );
 
   SimpleSelectStatement<$EntriesTable, EntryRow> _live() => _db.select(_db.entries)
@@ -484,5 +675,6 @@ class LocalStore implements EntryWriter {
         modifiedAt: r.modifiedAt,
         version: r.version,
         deleted: r.deleted,
+        previousRefIds: (jsonDecode(r.previousRefIds) as List).cast<String>().toList(),
       );
 }

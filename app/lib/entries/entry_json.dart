@@ -6,6 +6,7 @@ Map<String, Object?> entryToJson(Entry e) => {
       'id': e.id,
       'number': e.number,
       'ref_id': e.refId,
+      'previous_ref_ids': e.previousRefIds,
       'element_id': e.data.elementId,
       'dentition': e.data.dentition?.name,
       'tooth_type': e.data.toothType,
@@ -40,5 +41,6 @@ Entry entryFromJson(Map<String, Object?> j) {
     modifiedAt: DateTime.parse(j['modified_at'] as String),
     version: (j['version'] as num?)?.toInt() ?? 1,
     deleted: (j['deleted'] as bool?) ?? false,
+    previousRefIds: ((j['previous_ref_ids'] as List?) ?? const []).cast<String>().toList(),
   );
 }

@@ -25,6 +25,9 @@ class PushConflict extends PushResult {
   final Entry server;
 }
 
+/// The numbering changed since this device's epoch (Ref IDs were compacted): renumber, then retry.
+class PushStale extends PushResult {}
+
 /// Another row already holds this tooth under the same Ref ID (added on another device).
 class PushDuplicate extends PushResult {
   PushDuplicate(this.existing);
@@ -65,8 +68,22 @@ abstract class CloudApi {
   /// retry after a lost response returns the same rows instead of creating new ones.
   Future<List<Entry>> createEntries(String db, List<EntryDraft> drafts, String observer,
       {required List<String> ids, bool sharedId = false});
-  Future<({int start, int end})> reserveBlock(String db, String device, int size);
-  Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion});
+
+  /// The real number for provisional group [provisional] of [device]. [ids] are the group's entry ids;
+  /// asking again returns the same number. When some of them are already on the server (a lost answer)
+  /// their number is reused (if live) and the group's TEMP Ref ID, worked out by the server from the
+  /// prefix, is added to their Previous Ref IDs.
+  Future<int> claimNumber(String db, String device, int provisional, List<String> ids);
+
+  Future<int> numberingEpoch(String db);
+
+  /// Every row's current number and Ref IDs, and whether it is deleted (deleted rows too).
+  Future<List<ServerNumber>> currentNumbers(String db);
+
+  /// Owner only: close the gaps in the Ref IDs. Returns the new epoch and the rows that changed.
+  Future<({int epoch, List<NumberChange> changes})> compactRefIds(String db);
+
+  Future<PushResult> pushEntry(String db, Entry e, {required int baseVersion, required int epoch});
 
   /// Rows changed after [since] (all rows when null), oldest first, with their server change time.
   Future<List<(Entry, DateTime)>> changesSince(String db, DateTime? since);

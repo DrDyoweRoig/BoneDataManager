@@ -11,6 +11,7 @@ import '../entries/entry_writer.dart';
 import '../ids/ref_id.dart';
 import '../schema/layer.dart';
 import '../teeth/tooth_selection.dart';
+import 'ref_id_marks.dart';
 import 'widgets/select_chips.dart';
 
 enum _Mode { bone, teeth }
@@ -216,12 +217,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
 
     final teeth = _mode == _Mode.teeth ? _teeth : const <ToothSpec>[];
     return Scaffold(
-      appBar: AppBar(
-          title: Text(_editing
-              ? 'Edit ${widget.entry!.refId}'
-              : _adding
-                  ? 'Add teeth to ${widget.addTo!.refId}'
-                  : 'New entry')),
+      appBar: AppBar(title: _title(theme)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 820),
@@ -368,7 +364,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
               multi: false,
               onChanged: (s) => _change(() => _sharedId = s.isNotEmpty && s.single),
             )),
-      if (!_editing) _preview(theme, teeth, next, def.prefix, def.digits),
+      if (!_editing) _previewBox(theme, teeth, next, def.prefix, def.digits),
       if (_editing && widget.entry!.data.elementId == kTeethId)
         Align(
           alignment: Alignment.centerLeft,
@@ -386,19 +382,55 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
     ];
   }
 
+  /// App-bar title; for an existing entry, with its Provisional chip and earlier Ref IDs underneath.
+  Widget _title(ThemeData theme) {
+    final e = widget.entry ?? widget.addTo;
+    final text = _editing
+        ? 'Edit ${e!.refId}'
+        : _adding
+            ? 'Add teeth to ${e!.refId}'
+            : 'New entry';
+    final prev = e == null ? null : previousRefIdsText(e);
+    if (e == null || (prev == null && !isProvisional(e.number))) return Text(text);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Flexible(child: Text(text, overflow: TextOverflow.ellipsis)),
+        if (isProvisional(e.number)) ...[const SizedBox(width: 8), const ProvisionalChip()],
+      ]),
+      if (prev != null)
+        Text(prev, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+    ]);
+  }
+
+  /// Offline cloud copies save under provisional (TEMP) Ref IDs; the preview says so.
+  Widget _previewBox(ThemeData theme, List<ToothSpec> teeth, int next, String prefix, int digits) {
+    final w = widget.writer;
+    if (w is! SyncEngine || _adding) return _preview(theme, teeth, next, prefix, digits, false);
+    return ValueListenableBuilder<SyncStatus>(
+      valueListenable: w.status,
+      builder: (_, s, _) =>
+          _preview(theme, teeth, next, prefix, digits, s.connection == Connection.offline && w.allowOffline),
+    );
+  }
+
   /// What Save will create: Ref IDs and teeth.
-  Widget _preview(ThemeData theme, List<ToothSpec> teeth, int next, String prefix, int digits) {
+  Widget _preview(ThemeData theme, List<ToothSpec> teeth, int next, String prefix, int digits, bool offline) {
     final shared = _adding || (_sharedId && teeth.length > 1);
-    final sharedRef = _adding ? widget.addTo!.refId : formatRefId(prefix, digits, next);
+    final start = offline ? widget.store.nextProvisional : next;
+    String ref(int n) => offline ? provisionalRefId(prefix, n) : formatRefId(prefix, digits, n);
+    final tag = offline ? ' (provisional)' : '';
+    final sharedRef = _adding ? widget.addTo!.refId : ref(start);
     final String title;
     if (teeth.isEmpty) {
       title = 'Select jaw, side and tooth type';
     } else if (_adding) {
       title = '${teeth.length} ${teeth.length == 1 ? 'tooth' : 'teeth'} will be added to $sharedRef';
     } else if (shared) {
-      title = '${teeth.length} entries will be created, all with Ref ID $sharedRef';
+      title = '${teeth.length} entries will be created, all with Ref ID $sharedRef$tag';
+    } else if (offline && teeth.length == 1) {
+      title = '1 entry will be saved as $sharedRef$tag';
     } else {
-      title = '${teeth.length} ${teeth.length == 1 ? 'entry' : 'entries'} will be created';
+      title = '${teeth.length} ${teeth.length == 1 ? 'entry' : 'entries'} will be created$tag';
     }
     return Card.filled(
       margin: const EdgeInsets.only(bottom: 20),
@@ -408,7 +440,7 @@ class _EntryFormScreenState extends State<EntryFormScreen> {
           Text(title, style: theme.textTheme.titleSmall),
           for (var i = 0; i < teeth.length; i++)
             Text(
-                '${shared ? sharedRef : formatRefId(prefix, digits, next + i)} · '
+                '${shared ? sharedRef : ref(start + i)} · '
                 '${teeth[i].type} · ${teeth[i].jaw.label} · ${teeth[i].side.label}',
                 style: theme.textTheme.bodyMedium?.copyWith(fontFamily: 'monospace')),
         ]),

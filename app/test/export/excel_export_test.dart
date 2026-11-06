@@ -10,8 +10,8 @@ import '../support/xlsx_reader.dart';
 
 final t0 = DateTime(2026, 10, 23, 10, 14);
 
-Entry _e(String ref, EntryDraft d) =>
-    Entry(id: ref, refId: ref, data: d, createdBy: 'AP', createdAt: t0, modifiedBy: 'JM', modifiedAt: t0);
+Entry _e(String ref, EntryDraft d, {List<String> previous = const []}) => Entry(
+    id: ref, refId: ref, data: d, createdBy: 'AP', createdAt: t0, modifiedBy: 'JM', modifiedAt: t0, previousRefIds: previous);
 
 void main() {
   const db = DatabaseDef(
@@ -34,30 +34,39 @@ void main() {
             toothType: 'M1',
             jaw: Jaw.lower,
             side: Side.left,
-            values: {'w': '3', 'c': ['Occlusal', 'Root']})),
+            values: {'w': '3', 'c': ['Occlusal', 'Root']}),
+        previous: ['HOL-TEMP-1', 'HOL0057']),
     _e('MAS-0002', const EntryDraft(elementId: 'femur', side: Side.right, values: {'w': 'Grade X'})),
   ];
   final x = readXlsx(buildWorkbookBytes(db, entries, exportedBy: 'AP', exportedAt: t0));
   final rows = x.sheets['Entries']!;
-  List<String> padded(List<String> r) => [...r, ...List.filled(13 - r.length, '')];
+  List<String> padded(List<String> r) => [...r, ...List.filled(14 - r.length, '')];
 
   test('header columns in spec order with layers by order', () {
     expect(rows[0], [
-      'Ref ID', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side', 'Wear', 'Caries',
+      'Ref ID', 'Previous Ref IDs', 'Element', 'Region', 'Dentition', 'Tooth type', 'Jaw', 'Side', 'Wear', 'Caries',
       'Created by', 'Created at', 'Modified by', 'Modified at'
     ]);
   });
 
+  test('Previous Ref IDs column follows Ref ID', () {
+    expect(rows[0][1], 'Previous Ref IDs');
+    expect(rows[1][1], 'HOL-TEMP-1; HOL0057');
+    final plain = readXlsx(buildWorkbookBytes(db, [entries[1]], exportedBy: 'AP', exportedAt: t0));
+    expect(plain.sheets['Entries']![0][1], 'Previous Ref IDs');
+    expect(padded(plain.sheets['Entries']![1])[1], '');
+  });
+
   test('tooth row', () {
     expect(padded(rows[1]), [
-      'MAS-0001', 'Tooth', 'Teeth', 'Permanent', 'M1', 'Lower', 'Left', '3', 'Occlusal; Root',
+      'MAS-0001', 'HOL-TEMP-1; HOL0057', 'Tooth', 'Teeth', 'Permanent', 'M1', 'Lower', 'Left', '3', 'Occlusal; Root',
       'AP', '2026-10-23 10:14', 'JM', '2026-10-23 10:14'
     ]);
   });
 
   test('bone row leaves tooth columns empty; unknown option value kept', () {
-    expect(padded(rows[2]).sublist(0, 9),
-        ['MAS-0002', 'Femur', 'Lower limb', '', '', '', 'Right', 'Grade X', '']);
+    expect(padded(rows[2]).sublist(0, 10),
+        ['MAS-0002', '', 'Femur', 'Lower limb', '', '', '', 'Right', 'Grade X', '']);
   });
 
   test('header frozen and autofilter on', () {

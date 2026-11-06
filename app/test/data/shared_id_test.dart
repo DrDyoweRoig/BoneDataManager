@@ -25,12 +25,113 @@ void main() {
     expect((await store.createEntries([tooth('C')], 'AP')).single.refId, 'MAS-0002');
   });
 
-  test('shared create from an offline block uses one block number', () async {
+  test('a shared offline group gets one TEMP', () async {
     await store.linkToCloud('cloud', 'pc');
-    await store.setBlock(50, 99);
-    final made = await store.createEntriesFromBlock([tooth('M1'), tooth('M2')], 'AP', sharedId: true);
-    expect(made.map((e) => e.refId), ['MAS-0050', 'MAS-0050']);
-    expect(store.block, (next: 51, end: 99));
+    final made = await store.createProvisional([tooth('M1'), tooth('M2'), tooth('P4')], 'AP', sharedId: true);
+    expect(made.map((e) => e.refId), ['MAS-TEMP-1', 'MAS-TEMP-1', 'MAS-TEMP-1']);
+    expect(made.map((e) => e.number), [-1, -1, -1]);
+    expect(store.nextProvisional, 2);
+  });
+
+  test('add teeth to a TEMP group', () async {
+    await store.linkToCloud('cloud', 'pc');
+    await store.createProvisional([tooth('M1')], 'AP');
+    final added = await store.addToGroup('MAS-TEMP-1', -1, [tooth('M2')], 'AP');
+    expect(added.single.number, -1);
+    expect(added.single.refId, 'MAS-TEMP-1');
+  });
+
+  test('assignNumber renumbers the whole group and keeps the TEMP', () async {
+    await store.linkToCloud('cloud', 'pc');
+    final made = await store.createProvisional([tooth('M1'), tooth('M2')], 'AP', sharedId: true);
+    await store.deleteEntry(made.last.id, 'AP'); // deleted rows are renumbered too
+    final changes = await store.assignNumber(-1, 60);
+    expect(changes.length, 2);
+    final rows = await store.entriesIncludingDeleted();
+    expect(rows.map((e) => e.number), [60, 60]);
+    expect(rows.map((e) => e.refId), ['MAS-0060', 'MAS-0060']);
+    expect(rows.map((e) => e.previousRefIds), [['MAS-TEMP-1'], ['MAS-TEMP-1']]);
+    expect(rows.map((e) => e.version), [1, 2]);
+    expect((await store.pendingEntries()).length, 2);
+  });
+
+  test('applyNumbering swaps numbers without tripping the unique index', () async {
+    final a = (await store.createEntries([tooth('M1')], 'AP')).single;
+    final b = (await store.createEntries([tooth('M1')], 'AP')).single;
+    await store.applyNumbering([
+      (id: a.id, number: 2, refId: 'MAS-0002', previousRefIds: ['MAS-0001']),
+      (id: b.id, number: 1, refId: 'MAS-0001', previousRefIds: ['MAS-0002']),
+    ], epoch: 4);
+    expect((await store.entryById(a.id))!.number, 2);
+    expect((await store.entryById(b.id))!.number, 1);
+    expect(store.numberingEpoch, 4);
+    final ea = (await store.entryById(a.id))!, eb = (await store.entryById(b.id))!;
+    expect([ea.refId, eb.refId], ['MAS-0002', 'MAS-0001']);
+    expect([ea.previousRefIds, eb.previousRefIds], [['MAS-0001'], ['MAS-0002']]);
+  });
+
+  test('unlinking numbers after the highest pulled number, not the local counter', () async {
+    await store.linkToCloud('cloud', 'pc');
+    for (var n = 41; n <= 43; n++) {
+      await store.insertSynced([
+        Entry(
+            id: 's$n',
+            number: n,
+            refId: 'MAS-00$n',
+            data: tooth('M1'),
+            createdBy: 'JM',
+            createdAt: DateTime.utc(2026),
+            modifiedBy: 'JM',
+            modifiedAt: DateTime.utc(2026),
+            version: 1)
+      ]);
+    }
+    await store.deleteEntry('s43', 'AP');
+    await store.createProvisional([tooth('M2')], 'AP');
+    await store.unlinkFromCloud();
+    final temp = (await store.allEntries()).firstWhere((e) => e.previousRefIds.isNotEmpty);
+    expect([temp.number, temp.refId], [44, 'MAS-0044']);
+    expect(store.nextNumber, 45);
+    expect((await store.createEntries([tooth('C')], 'AP')).single.refId, 'MAS-0045');
+  });
+
+  test('unlinking numbers pending TEMP groups from nextNumber and clears the epoch', () async {
+    await store.linkToCloud('cloud', 'pc');
+    await store.createEntries([tooth('C')], 'AP'); // #1, so nextNumber is 2
+    await store.createProvisional([tooth('M1'), tooth('M2')], 'AP', sharedId: true); // TEMP-1
+    await store.createProvisional([tooth('P4')], 'AP'); // TEMP-2
+    await store.applyNumbering([], epoch: 3);
+    await store.unlinkFromCloud();
+    final rows = await store.entriesIncludingDeleted();
+    expect(rows.map((e) => e.number), [1, 2, 2, 3]);
+    expect(rows.map((e) => e.refId), ['MAS-0001', 'MAS-0002', 'MAS-0002', 'MAS-0003']);
+    expect(rows.map((e) => e.previousRefIds), [[], ['MAS-TEMP-1'], ['MAS-TEMP-1'], ['MAS-TEMP-2']]);
+    expect(store.nextNumber, 4);
+    expect(store.numberingEpoch, isNull);
+    expect(await store.pendingEntries(), isEmpty);
+  });
+
+  test('compactLocal closes gaps in order and keeps groups', () async {
+    await store.createEntries([tooth('M1')], 'AP'); // #1
+    final two = (await store.createEntries([tooth('M1')], 'AP')).single; // #2
+    await store.createEntries([tooth('M1'), tooth('M2')], 'AP', sharedId: true); // #3
+    await store.createEntries([tooth('C')], 'AP'); // #4
+    await store.deleteEntry(two.id, 'AP');
+    final changes = await store.compactLocal();
+    expect(changes.length, 3);
+    final live = await store.allEntries();
+    expect(live.map((e) => e.number), [1, 2, 2, 3]);
+    expect(live.map((e) => e.refId), ['MAS-0001', 'MAS-0002', 'MAS-0002', 'MAS-0003']);
+    expect(live[1].previousRefIds, ['MAS-0003']);
+    expect(live[3].previousRefIds, ['MAS-0004']);
+    final gone = (await store.entryById(two.id))!;
+    expect([gone.number, gone.refId], [2, 'MAS-0002']);
+    expect(store.nextNumber, 4);
+  });
+
+  test('compactLocal on a cloud copy throws', () async {
+    await store.linkToCloud('cloud', 'pc');
+    await expectLater(store.compactLocal(), throwsStateError);
   });
 
   test('add teeth to an existing Ref ID', () async {
@@ -59,8 +160,7 @@ void main() {
 
   test('adding to a cloud copy is pending until uploaded', () async {
     await store.linkToCloud('cloud', 'pc');
-    await store.setBlock(1, 10);
-    final made = await store.createEntriesFromBlock([tooth('M1')], 'AP'); // stands in for a synced group
+    final made = await store.createProvisional([tooth('M1')], 'AP'); // stands in for a synced group
     await store.markSynced(made.single.id, 1);
     await store.addToGroup(made.single.refId, made.single.number, [tooth('M2')], 'AP');
     expect((await store.pendingEntries()).single.data.toothType, 'M2');
