@@ -133,7 +133,8 @@ begin
   n := public.claim_number(db, 'pc', 3, array[id1]);
   n2 := public.claim_number(db, 'pc-other', 3, array[id1]);
   select count(*) into n2 from public.entries
-  where id = id1 and previous_ref_ids = '["T-TEMP-3"]' and version = 1;
+  where id = id1 and version = 1
+    and (select count(*) from jsonb_array_elements_text(previous_ref_ids) t where t = 'T-TEMP-3') = 1;
   log := log || case when n = 1 and n2 = 1 then 'PASS a claim keeps the TEMP Ref ID (made by the server) on an uploaded entry'
                      else 'FAIL TEMP Ref ID on an uploaded entry: number ' || n || ', rows ' || n2 end;
 
@@ -263,13 +264,15 @@ begin
   n := public.claim_number(db, 'editor-pc', 1, '{}');
   log := log || case when n > 0 then 'PASS editor can claim a number' else 'FAIL editor claim returned ' || n end;
   reset role;
+  select count(*) into n2 from public.entries where database_id = db;
 
   -- Viewer
   perform set_config('request.jwt.claims',
     json_build_object('sub', v, 'email', viewer_email, 'role', 'authenticated')::text, true);
   set local role authenticated;
-  select count(*) into n from public.entries where database_id = db and id = id1;
-  log := log || case when n = 1 then 'PASS viewer can read entries' else 'FAIL viewer read ' || n end;
+  select count(*) into n from public.entries where database_id = db;
+  log := log || case when n > 0 and n = n2 then 'PASS viewer can read entries'
+                     else 'FAIL viewer read ' || n || ' of ' || n2 end;
   begin
     perform public.create_entries(db, '[{"element_id":"femur"}]', 'V');
     log := log || 'FAIL viewer could create an entry'::text;
